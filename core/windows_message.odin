@@ -1,7 +1,8 @@
-package redef
+package redef_core
 import win "core:sys/windows"
 import "core:strings"
 import "core:fmt"
+import "core:log"
 
 log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARAM) {
     longest :: 196 / 8
@@ -14,7 +15,7 @@ log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARA
         fmt.aprintf("LP: 0x%8x\t\tWP: 0x%8x", lparam, wparam, allocator = context.temp_allocator)
     )
     result := strings.to_string(message_builder)
-    fmt.println(result)
+    log.debug(result)
 }
 
 
