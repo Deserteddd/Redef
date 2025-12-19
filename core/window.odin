@@ -7,21 +7,8 @@ import win "core:sys/windows"
 import que "core:container/queue"
 
 EventQueue :: que.Queue(Event)
+
 KeyboardState :: #sparse[Keycode]bool
-
-@(private = "file")
-add_event :: proc(event: Event) {
-    que.enqueue(&event_queue, event)
-}
-
-@(private = "file")
-kb_state: KeyboardState
-
-@(private = "file")
-event_queue: EventQueue
-
-@(private = "file")
-mouse_position: [2]i32
 
 WindowHandle :: win.HWND
 
@@ -37,6 +24,13 @@ KeyboardEventType :: enum {
     Repeat,
 }
 
+ModKey :: enum u8 {
+    CONTROL = u8(Keycode.CONTROL),
+    SHIFT   = u8(Keycode.SHIFT),
+}
+
+ModKeys :: bit_set[ModKey]
+
 TextInput :: struct {
     key: rune
 }
@@ -44,7 +38,7 @@ TextInput :: struct {
 KeyboardEvent :: struct {
     type: KeyboardEventType,
     key: Keycode,
-    text: rune
+    mod: ModKeys
 }
 
 MouseEvent :: struct {
@@ -65,9 +59,7 @@ MouseEventType :: enum {
     // For wheel events, MouseEvent.position corresponds to scroll direction
     // e.g. move wheel up -> event.mouse == {-1, 0}
     MWheel,
-    Move,
 }
-
 
 Quit :: distinct i32
 
@@ -78,14 +70,24 @@ Event :: union {
     TextInput
 }
 
-
 @(private = "file")
 WindowClass :: win.WNDCLASSEXW
 
 @(private = "file")
+kb_state: KeyboardState
+
+@(private = "file")
+event_queue: EventQueue
+
+@(private = "file")
+mouse_position: [2]i32
+
+@(private = "file")
+add_event :: proc(event: Event) { que.enqueue(&event_queue, event) }
+
+@(private = "file")
 create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: bool) {
-    log.info("create window class")
-    hinst: win.HANDLE = auto_cast win.GetModuleHandleW(nil)
+    hinst: win.HMODULE = win.GetModuleHandleW(nil)
     if hinst == nil {
         log_win_err()
         return {}, false
@@ -95,19 +97,25 @@ create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: 
         cbSize = size_of(wc)
         style = CS_OWNDC
         lpfnWndProc = handle_msg_setup
-        hInstance = hinst
+        hInstance = auto_cast hinst
         lpszClassName = name
     }
     if error := win.RegisterClassExW(&wc); error == 0 {
         log_win_err()
         return {}, false
     }
+    log.infof("Window class '%v' created", wc.lpszClassName)
     return wc, true
 }
 
-log_win_err :: proc(loc := #caller_location) -> (was_error: bool = true) {
+@(private = "file")
+// Returns: true if a valid windows error exited
+log_win_err :: proc(loc := #caller_location) -> bool {
     err := win.GetLastError()
-    if err == 0 do return false
+    if err == 0 {
+        log.warnf("return value of log_win_err() should not be relied upon", location = loc)
+        return false
+    } 
     pMsgBuf: [^]u16
     ok := win.FormatMessageW(
         win.FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -118,51 +126,15 @@ log_win_err :: proc(loc := #caller_location) -> (was_error: bool = true) {
     if ok == 0 do panic("Unable to log error")
     win_error_string16 := cstring16(pMsgBuf)
 
-    error := fmt.aprintf("%v\n%v: %v", loc, err, win_error_string16)
-    error_16 := win.utf8_to_wstring(error)
-    log.errorf("Windows error [%v]: %v", err, error)
-    win.MessageBoxW(nil, error_16, "Error", win.MB_ICONERROR)
+    error_string := fmt.aprintf("%v: %v", err, win_error_string16, allocator = context.temp_allocator)
+    error_string_16 := win.utf8_to_wstring(error_string)
+    log.errorf("Windows error %v", error_string, location = loc)
+    win.MessageBoxW(nil, error_string_16, "Error", win.MB_ICONERROR)
     win.LocalFree(pMsgBuf)
-    return
+    return true
 }
 
-create_window :: proc(name: string, width, height: i32) -> ^Window {
-    context.logger = log.create_console_logger(allocator = context.temp_allocator)
-    log.info("create window")
-    window := new(Window)
-    name_16 := win.utf8_to_wstring(name)
-    wc, ok := create_window_class(name_16)
-    if !ok do return nil
-    wr: win.RECT
-    wr.left = 100;
-    wr.right = width + wr.left;
-    wr.top = 100;
-    wr.bottom = height + wr.top;
-    ok = auto_cast win.AdjustWindowRect(&wr, win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU, win.FALSE)
-    if !ok {
-        log_win_err()
-        return nil
-    }
-    hwnd := win.CreateWindowW( 
-        wc.lpszClassName,
-        name_16,
-        win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE,
-        win.CW_USEDEFAULT, win.CW_USEDEFAULT, wr.right - wr.left, wr.bottom - wr.top,
-        nil, nil, wc.hInstance, &window
-    )
-    if hwnd == nil {
-        log_win_err()
-        return nil
-    }
 
-    window.handle = hwnd
-    window.window_class = wc
-    window.size = {wr.right - wr.left, wr.bottom - wr.top}
-    
-    que.init(&event_queue, capacity = 32)
-    win.GetKeyboardState(auto_cast &kb_state)
-    return window
-}
 
 @(private = "file")
 handle_msg_setup :: proc "stdcall" (
@@ -173,16 +145,9 @@ handle_msg_setup :: proc "stdcall" (
 ) -> win.LRESULT {
     context = runtime.default_context()
     context.logger = log.create_console_logger()
-
-    log.info("handle message setup")
-    log_windows_message(msg, wparam, lparam)
     if msg == win.WM_NCCREATE {
-        log.info("Msg was WM_NCCREATE")
         pCreate: ^win.CREATESTRUCTW = transmute(^win.CREATESTRUCTW)lparam
-        log.info(pCreate.lpszName)
         pWnd: ^Window = auto_cast pCreate.lpCreateParams
-        log.info(pWnd.size)
-        log.info(pCreate.lpszName)
         win.SetLastError(0)
         ok := win.SetWindowLongPtrW(hwnd, win.GWLP_USERDATA, transmute(win.LONG_PTR)pWnd)
         if ok == 0 do if log_win_err() do return 0
@@ -206,65 +171,41 @@ WndProc :: proc "stdcall" (
 ) -> win.LRESULT {
     context = runtime.default_context()
     context.logger = log.create_console_logger(allocator = context.temp_allocator)
-
-    // log_windows_message(msg, wparam, lparam)
     switch msg {
-        case win.WM_CLOSE:
-            win.PostQuitMessage(69)
-        case win.WM_DESTROY:
-            win.PostQuitMessage(420)
+        case win.WM_CLOSE:       win.PostQuitMessage(69)
         
         // -- Keyboard events --
-        case win.WM_KEYDOWN:
-            create_kb_event( kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
-        case win.WM_KEYUP:
-            create_kb_event(.KeyUp, wparam)
+        case win.WM_KEYDOWN:     create_kb_event( kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
+        case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
+        case win.WM_CHAR:        add_event(TextInput { key = rune(wparam)})
 
-        case win.WM_CHAR:
-            event: Event = TextInput { key = rune(wparam) }
-            add_event(event)
         // -- Mouse events --
         // Left
-        case win.WM_LBUTTONDOWN:
-            event := create_mb_event(.LPress, lparam)
-            add_event(event)
-        case win.WM_LBUTTONUP:
-            event := create_mb_event(.LRelease, lparam)
-            add_event(event)
+        case win.WM_LBUTTONDOWN: create_mouse_event(.LPress, lparam)
+        case win.WM_LBUTTONUP:   create_mouse_event(.LRelease, lparam)
 
         // Right
-        case win.WM_RBUTTONDOWN:
-            event := create_mb_event(.RPress, lparam)
-            add_event(event)
-        case win.WM_RBUTTONUP:
-            event := create_mb_event(.RRelease, lparam)
-            add_event(event)
+        case win.WM_RBUTTONDOWN: create_mouse_event(.RPress, lparam)
+        case win.WM_RBUTTONUP:   create_mouse_event(.RRelease, lparam)
 
         // Middle
-        case win.WM_MBUTTONDOWN:
-            event := create_mb_event(.MRelease, lparam)
-            add_event(event)
-        case win.WM_MBUTTONUP:
-            event := create_mb_event(.MRelease, lparam)
-            add_event(event)
-        
-        // Move
-        case win.WM_MOUSEMOVE:
-            event := create_mb_event(.Move, lparam)
-            add_event(event)
+        case win.WM_MBUTTONDOWN: create_mouse_event(.MPress, lparam)
+        case win.WM_MBUTTONUP:   create_mouse_event(.MRelease, lparam)
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+@(private = "file")
 create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
     keycode := Keycode(wparam)
-    event: Event = KeyboardEvent {type = event_type, key = keycode}
+    mod: ModKeys
+    mod += kb_state[.CONTROL] ? {.CONTROL} : {}
+    mod += kb_state[.SHIFT] ? {.SHIFT} : {}
+    event: Event = KeyboardEvent {type = event_type, key = keycode, mod = mod}
     switch event_type {
         case .KeyDown:
-            assert(kb_state[keycode] == false)
             kb_state[keycode] = true
         case .KeyUp:
-            assert(kb_state[keycode] == true)
             kb_state[keycode] = false
         case .Repeat:
             assert(kb_state[keycode])
@@ -272,31 +213,98 @@ create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
     que.enqueue(&event_queue, event)
 }
 
-create_mb_event :: proc(event_type: MouseEventType, lparam: win.LPARAM) -> MouseEvent {
+@(private = "file")
+create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM) {
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
-    return MouseEvent {
+    mouse_position = {x, y}
+    add_event(MouseEvent {
         type = event_type,
         position = {x, y}
-    }
+    })
 }
 
-pump_event_iter :: proc(window: ^Window) -> (Event, bool) {
+create_window :: proc(name: string, width, height: i32) -> ^Window {
+    defer free_all(context.temp_allocator)
+    context.logger = log.create_console_logger(allocator = context.temp_allocator)
+    window := new(Window)
+    name_16 := win.utf8_to_wstring(name, context.allocator)
+    wc, ok := create_window_class(name_16)
+    if !ok do return nil
+
+    // Adjust the rect so the canvas area of the window matches width and height parameters
+    wr: win.RECT = {100, 100, width + 100, height + 100}
+    ok = auto_cast win.AdjustWindowRect(&wr, win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU, win.FALSE)
+    if !ok {
+        log_win_err()
+        free(window)
+        return nil
+    }
+    // window dimensions are meant to be user accessible and so they should match the canvas size
+    window.size = {width, height}
+    window.window_class = wc
+
+    window.handle = win.CreateWindowW( 
+        wc.lpszClassName,
+        name_16,
+        win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE,
+        win.CW_USEDEFAULT, 
+        win.CW_USEDEFAULT,
+        wr.right - wr.left,
+        wr.bottom - wr.top,
+        nil, nil, 
+        wc.hInstance, 
+        &window
+    )
+    if window.handle == nil {
+        log_win_err()
+        free(window)
+        return nil
+    }
+
+
+    alloc_err := que.init(&event_queue, capacity = 32)
+    if alloc_err != nil {
+        destroy_window(window)
+        log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
+        return nil
+    }
+    log.debug("Window handle:", window.handle)
+    log.infof("Window '%v' created", window.window_class.lpszClassName)
+    return window
+}
+
+pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
     msg: win.MSG
     result := win.GetMessageW(&msg, nil, 0, 0)
-    if result <= 0 do return Quit(result == -1 ? -1 : i32(msg.wParam)), true
+    if result == -1 {
+        ensure(log_win_err())
+        event = Quit(-1)
+        return
+    } 
+    if result == 0 {
+        event = Quit(msg.wParam)
+        return
+    }
     win.TranslateMessage(&msg)
     win.DispatchMessageW(&msg)
 
     if que.len(event_queue) > 0 {
-        return que.pop_front(&event_queue), true
+        event = que.dequeue(&event_queue)
+        return
     }
-    return {}, false
+    ok = false
+    return
 }
 
 destroy_window :: proc(w: ^Window) {
-    win.UnregisterClassW(w.window_class.lpszClassName, w.window_class.hInstance)
-    win.DestroyWindow(auto_cast w.handle)
+    success := win.UnregisterClassW(w.window_class.lpszClassName, w.window_class.hInstance)
+    if !success do log_win_err()
+    
+    log.debug("Window handle:", w.handle)
+    success = win.DestroyWindow(w.handle)
+    if !success do log_win_err()
+
 }
 
 get_window_size :: proc(w: ^Window) -> [2]i32 {

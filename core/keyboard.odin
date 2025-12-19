@@ -1,8 +1,7 @@
 package redef_core
 
-import "core:container/intrusive/list"
-// Virtual keycodes from 
-Keycode :: enum {
+// Virtual keycodes from windows documentation (AI-generated)
+Keycode :: enum u8 {
     None                  = 0x00,
 
     LBUTTON               = 0x01,

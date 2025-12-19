@@ -4,7 +4,7 @@ import "core:strings"
 import "core:fmt"
 import "core:log"
 
-log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARAM) {
+log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARAM, loc := #caller_location)  {
     longest :: 196 / 8
     message_builder  := strings.builder_make(context.temp_allocator)
     message_litereal := fmt.aprint(WindowsMessage(msg), allocator = context.temp_allocator)
@@ -15,7 +15,7 @@ log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARA
         fmt.aprintf("LP: 0x%8x\t\tWP: 0x%8x", lparam, wparam, allocator = context.temp_allocator)
     )
     result := strings.to_string(message_builder)
-    log.debug(result)
+    log.debug(result, location = loc)
 }
 
 

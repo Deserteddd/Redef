@@ -12,21 +12,20 @@ main :: proc() {
     defer rd.destroy_window(window)
     running := true
     for running {
-        // log.debug(rd.get_mouse_position())
+        defer free_all(context.temp_allocator)
         for event in rd.pump_event_iter(window) {
             #partial switch ev in event {
                 case rd.Quit:
                     log.debug("Received exit code:", ev)
                     running = false
-                case rd.KeyboardEvent:
-                    #partial switch ev.type {
-                        case .KeyDown:
-                            log.debugf("Key %v pressed", ev.key)
-                        case .KeyUp:
-                            log.debugf("Key %v released", ev.key)
-                    }
+                
                 case rd.TextInput:
                     log.debug("Text input:", ev.key)
+                case rd.KeyboardEvent:
+                    if ev.key == .C && .CONTROL in ev.mod {
+                        log.debug("CTRL+C Pressed")
+                        running = false
+                    }
                 case rd.MouseEvent:
                     #partial switch ev.type {
                         case .LPress:
@@ -34,10 +33,9 @@ main :: proc() {
                         case .LRelease:
                             log.debug("LMB released at", ev.position)
                     }
-
             }
         }
-
+        
     }
 
 }
