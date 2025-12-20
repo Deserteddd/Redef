@@ -23,7 +23,6 @@ main :: proc() {
                     log.debug("Text input:", ev.key)
                 case rd.KeyboardEvent:
                     if ev.key == .C && .CONTROL in ev.mod {
-                        log.debug("CTRL+C Pressed")
                         running = false
                     }
                 case rd.MouseEvent:

@@ -134,8 +134,6 @@ log_win_err :: proc(loc := #caller_location) -> bool {
     return true
 }
 
-
-
 @(private = "file")
 handle_msg_setup :: proc "stdcall" (
     hwnd: win.HWND,
@@ -160,8 +158,6 @@ handle_msg_setup :: proc "stdcall" (
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-
-
 @(private = "file")
 WndProc :: proc "stdcall" (
     hwnd: win.HWND,
@@ -172,12 +168,14 @@ WndProc :: proc "stdcall" (
     context = runtime.default_context()
     context.logger = log.create_console_logger(allocator = context.temp_allocator)
     switch msg {
-        case win.WM_CLOSE:       win.PostQuitMessage(69)
+        case win.WM_CLOSE:         destroy_window_raw(hwnd)
+        case win.WM_DESTROY:       win.PostQuitMessage(69)
         
         // -- Keyboard events --
         case win.WM_KEYDOWN:     create_kb_event( kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
         case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
-        case win.WM_CHAR:        add_event(TextInput { key = rune(wparam)})
+        case win.WM_CHAR:        
+            if !kb_state[.CONTROL] do add_event(TextInput { key = rune(wparam)})
 
         // -- Mouse events --
         // Left
@@ -224,6 +222,13 @@ create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM) {
     })
 }
 
+@(private = "file")
+destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) {
+    log.debug("Destroying window with handle:", handle, location = loc)
+    success := win.DestroyWindow(win.HWND(handle))
+    if !success do log_win_err(loc)
+}
+
 create_window :: proc(name: string, width, height: i32) -> ^Window {
     defer free_all(context.temp_allocator)
     context.logger = log.create_console_logger(allocator = context.temp_allocator)
@@ -262,15 +267,13 @@ create_window :: proc(name: string, width, height: i32) -> ^Window {
         return nil
     }
 
-
     alloc_err := que.init(&event_queue, capacity = 32)
     if alloc_err != nil {
         destroy_window(window)
         log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
         return nil
     }
-    log.debug("Window handle:", window.handle)
-    log.infof("Window '%v' created", window.window_class.lpszClassName)
+    log.infof("Window '%v: %v' created", window.window_class.lpszClassName, window.handle)
     return window
 }
 
@@ -297,13 +300,11 @@ pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
     return
 }
 
-destroy_window :: proc(w: ^Window) {
+destroy_window :: proc(w: ^Window, loc := #caller_location) {
+    if win.IsWindow(w.handle) do destroy_window_raw(w.handle, loc = loc)
     success := win.UnregisterClassW(w.window_class.lpszClassName, w.window_class.hInstance)
-    if !success do log_win_err()
-    
-    log.debug("Window handle:", w.handle)
-    success = win.DestroyWindow(w.handle)
-    if !success do log_win_err()
+    if !success do log_win_err(loc)
+    free(w)
 
 }
 
