@@ -1,8 +1,8 @@
-package redef
+package redef_example
 
 import "core:log"
 import "base:runtime"
-import rd "core"
+import rd "../src"
 
 main :: proc() {
     when !ODIN_DEBUG {
@@ -26,12 +26,7 @@ main :: proc() {
                         running = false
                     }
                 case rd.MouseEvent:
-                    #partial switch ev.type {
-                        case .LPress:
-                            log.debug("LMB pressed at", ev.position)
-                        case .LRelease:
-                            log.debug("LMB released at", ev.position)
-                    }
+                    log.debugf("Mouse event %v at position %v. mod: %v", ev.type, ev.position, ev.mod)
             }
         }
         

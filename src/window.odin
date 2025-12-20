@@ -1,4 +1,4 @@
-package redef_core
+package redef
 
 import "base:runtime"
 import "core:log"
@@ -45,20 +45,22 @@ MouseEvent :: struct {
     type: MouseEventType,
 
     // Relative mouse position at the time of the event
-    position: [2]i32
+    position: [2]i32,
+    mod: ModKeys
 }
 
-MouseEventType :: enum {
-    LPress,
-    LRelease,
-    RPress,
-    RRelease,
-    MPress,
-    MRelease,
+MouseEventType :: enum u32 {
+    LPress   = 1 << 0,
+    LRelease = 1 << 1,
+    RPress   = 1 << 2,
+    RRelease = 1 << 3,
+    MPress   = 1 << 4,
+    MRelease = 1 << 5,
 
     // For wheel events, MouseEvent.position corresponds to scroll direction
-    // e.g. move wheel up -> event.mouse == {-1, 0}
-    MWheel,
+    // e.g. move wheel up -> event.mouse == {120, 0}
+    // 120 is the wheel delta defined by Windows. 
+    MWheel  = 1 << 6,
 }
 
 Quit :: distinct i32
@@ -189,6 +191,10 @@ WndProc :: proc "stdcall" (
         // Middle
         case win.WM_MBUTTONDOWN: create_mouse_event(.MPress, lparam)
         case win.WM_MBUTTONUP:   create_mouse_event(.MRelease, lparam)
+
+        // Scroll
+        case win.WM_MOUSEWHEEL: 
+            create_mouse_event(.MWheel, lparam, wparam)
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
@@ -212,13 +218,21 @@ create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
 }
 
 @(private = "file")
-create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM) {
+create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wparam: win.WPARAM = uintptr(0)) {
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
     mouse_position = {x, y}
+    if event_type == .MWheel {
+        x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam))
+        y = 0
+    }
+    mod: ModKeys
+    mod += kb_state[.CONTROL] ? {.CONTROL} : {}
+    mod += kb_state[.SHIFT] ? {.SHIFT} : {} 
     add_event(MouseEvent {
         type = event_type,
-        position = {x, y}
+        position = {x, y},
+        mod = mod
     })
 }
 

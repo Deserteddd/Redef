@@ -1,4 +1,4 @@
-package redef_core
+package redef
 import win "core:sys/windows"
 import "core:strings"
 import "core:fmt"
@@ -17,8 +17,6 @@ log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARA
     result := strings.to_string(message_builder)
     log.debug(result, location = loc)
 }
-
-
 
 WindowsMessage :: enum win.UINT {
     WM_NULL                           = 0x0000,

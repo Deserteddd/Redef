@@ -1,4 +1,4 @@
-package redef_core
+package redef
 
 // Virtual keycodes from windows documentation (AI-generated)
 Keycode :: enum u8 {
