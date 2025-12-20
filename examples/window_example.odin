@@ -5,10 +5,9 @@ import "base:runtime"
 import rd "../src"
 
 main :: proc() {
-    when !ODIN_DEBUG {
-        context.logger = log.create_console_logger()
-    }
-    window := rd.create_window("Big pp window", 640, 480); assert(window != nil)
+    when !ODIN_DEBUG do context.logger = log.create_console_logger()
+
+    window := rd.create_window("Big pp window", 640, 480, ODIN_DEBUG); assert(window != nil)
     defer rd.destroy_window(window)
     running := true
     for running {
