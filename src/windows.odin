@@ -6,20 +6,13 @@ import "base:runtime"
 import win "core:sys/windows"
 import que "core:container/queue"
 
+// TODO: Make multiple windows work in a way where each window has it's own event queue
+//       and they can be polled separately
+
 @(private = "package")
 WindowClass :: win.WNDCLASSEXW
 
-@(private = "package")
-kb_state: KeyboardState
 
-@(private = "package")
-event_queue: EventQueue
-
-@(private = "package")
-mouse_position: [2]i32
-
-@(private = "package")
-add_event :: proc(event: Event) { que.enqueue(&event_queue, event) }
 
 @(private = "package")
 create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: bool) {
@@ -40,7 +33,6 @@ create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: 
         log_win_err()
         return {}, false
     }
-    log.infof("Window class '%v' created", wc.lpszClassName)
     return wc, true
 }
 
@@ -57,8 +49,8 @@ init_windows_window :: proc(window: ^Window) -> bool {
         log_win_err()
         return false
     }
-    // window dimensions are meant to be user accessible and so they should match the canvas size
 
+    // window dimensions are meant to be user accessible and so they should match the canvas size
     window.handle = cast(WindowHandle)win.CreateWindowW( 
         wc.lpszClassName,
         name_16,
@@ -146,10 +138,10 @@ WndProc :: proc "stdcall" (
         case win.WM_DESTROY:       win.PostQuitMessage(69)
         
         // -- Keyboard events --
-        case win.WM_KEYDOWN:     create_kb_event( kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
+        case win.WM_KEYDOWN:     create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
         case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
         case win.WM_CHAR:        
-            if !kb_state[.CONTROL] do add_event(TextInput { key = rune(wparam)})
+            if !g.kb_state[.CONTROL] do add_event(TextInput { key = rune(wparam)})
 
         // -- Mouse events --
         // Left
@@ -175,32 +167,32 @@ WndProc :: proc "stdcall" (
 create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
     keycode := Keycode(wparam)
     mod: ModKeys
-    mod += kb_state[.CONTROL] ? {.CONTROL} : {}
-    mod += kb_state[.SHIFT] ? {.SHIFT} : {}
+    mod += g.kb_state[.CONTROL] ? {.CONTROL} : {}
+    mod += g.kb_state[.SHIFT] ? {.SHIFT} : {}
     event: Event = KeyboardEvent {type = event_type, key = keycode, mod = mod}
     switch event_type {
         case .KeyDown:
-            kb_state[keycode] = true
+            g.kb_state[keycode] = true
         case .KeyUp:
-            kb_state[keycode] = false
+            g.kb_state[keycode] = false
         case .Repeat:
-            assert(kb_state[keycode])
+            assert(g.kb_state[keycode])
     }
-    que.enqueue(&event_queue, event)
+    que.enqueue(&g.event_queue, event)
 }
 
 @(private = "package")
 create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wparam: win.WPARAM = uintptr(0)) {
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
-    mouse_position = {x, y}
+    g.mouse_position = {x, y}
     if event_type == .MWheel {
         x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam))
         y = 0
     }
     mod: ModKeys
-    mod += kb_state[.CONTROL] ? {.CONTROL} : {}
-    mod += kb_state[.SHIFT] ? {.SHIFT} : {} 
+    mod += g.kb_state[.CONTROL] ? {.CONTROL} : {}
+    mod += g.kb_state[.SHIFT] ? {.SHIFT} : {} 
     add_event(MouseEvent {
         type = event_type,
         position = {x, y},
@@ -212,21 +204,17 @@ create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wpara
 @(private = "package")
 destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
     if !win.IsWindow(win.HWND(handle)) {
-        log.warn("Tried to destroy an already destroyed window:", handle, location = loc)
         return false
     }
+    defer g.window_count -= 1
     log.debug("Destroying window with handle:", handle, location = loc)
     success := win.DestroyWindow(win.HWND(handle))
-    if !success {
-        log_win_err(loc)
-        return true
-    }
+    if !success do log_win_err(loc)
     return true
 }
 
 @(private = "package")
 unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
-    log.debug("I want to unregister the class:", w.name, location = loc)
     assert(w != nil)
     ok := win.UnregisterClassW(string_to_cstring16(w.name), w.window_class.hInstance)
     if !ok do log_win_err()
