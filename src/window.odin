@@ -92,7 +92,10 @@ g: Global
 
 
 @(private = "package")
-add_event :: proc(event: Event) { que.enqueue(&g.event_queue, event) }
+add_event :: proc(event: Event, loc := #caller_location) { 
+    ok, err := que.enqueue(&g.event_queue, event)
+    if !ok do log.errorf("Error: %v", err, location = loc)
+}
 
 time_since_start :: proc() -> time.Duration {
     return time.since(g.elapsed)
@@ -110,22 +113,23 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     } else {
         context.logger = log.nil_logger()
     }
+
+    alloc_err := que.init(&g.event_queue, capacity = 32)
+    if alloc_err != nil {
+        log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
+        return {}
+    }
+
     window := new(Window)
-    
     window.size = {width, height}
     window.name = name
     init_windows_window(window)
     if g.window_count == 0 {
         init_graphics(window)
         g.elapsed = time.now()
+        g.dt = time.now()
     }
 
-    alloc_err := que.init(&g.event_queue, capacity = 32)
-    if alloc_err != nil {
-        destroy_window(window)
-        log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
-        return nil
-    }
     log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle)
     g.window_count += 1
     return window

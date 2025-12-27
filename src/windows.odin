@@ -13,7 +13,7 @@ import que "core:container/queue"
 WindowClass :: win.WNDCLASSEXW
 
 
-@(private = "package")
+@(private = "file")
 create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: bool) {
     hinst: win.HMODULE = win.GetModuleHandleW(nil)
     if hinst == nil {
