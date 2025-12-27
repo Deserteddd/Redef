@@ -45,26 +45,22 @@ init_graphics :: proc(window: ^Window) {
     result := d3d.CreateDeviceAndSwapChain(
         nil,
         d3d.DRIVER_TYPE.HARDWARE,
-        nil, {},nil, 0,
+        nil, {}, nil, 0,
         d3d.SDK_VERSION,
         &sd,
         &swapchain,
         &device,
         nil,
         &ctx
-    )
-    assert(device != nil)
-    assert(swapchain != nil)
-    assert(ctx != nil)
-    if result != 0 {
-        log.error("Device creation failed with code:", result)
-        return
-    }
+    ); assert(result == 0)
 
     backbuffer: ^d3d.IResource
-    swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
-    device->CreateRenderTargetView(backbuffer, nil, &target)
-    backbuffer->Release()
+    result = swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
+    assert(result == 0)
+    result = device->CreateRenderTargetView(backbuffer, nil, &target)
+    assert(result == 0)
+    result = d3d.HRESULT(backbuffer->Release())
+    assert(result == 0)
 
     log.info("Initialized graphics")
 }

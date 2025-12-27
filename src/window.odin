@@ -84,6 +84,7 @@ Global :: struct {
     window_count:   u32,
     graphics:       Graphics,
     dt:             time.Time,
+    elapsed:        time.Time,
 }
 
 @(private = "package")
@@ -93,10 +94,14 @@ g: Global
 @(private = "package")
 add_event :: proc(event: Event) { que.enqueue(&g.event_queue, event) }
 
-get_dt :: proc() -> f64 {
+time_since_start :: proc() -> time.Duration {
+    return time.since(g.elapsed)
+}
+
+get_dt :: proc() -> time.Duration {
     elapsed := time.since(g.dt)
     g.dt = time.now()
-    return time.duration_seconds(elapsed)
+    return elapsed
 }
 
 create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window {
@@ -112,6 +117,7 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     init_windows_window(window)
     if g.window_count == 0 {
         init_graphics(window)
+        g.elapsed = time.now()
     }
 
     alloc_err := que.init(&g.event_queue, capacity = 32)
@@ -131,18 +137,15 @@ string_to_cstring16 :: proc(s: string, allocator := context.temp_allocator) -> c
 
 pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
     msg: win.MSG
-    result := win.GetMessageW(&msg, nil, 0, 0)
-    if result == -1 {
-        ensure(log_win_err())
-        event = Quit(-1)
-        return
-    } 
-    if result == 0 {
-        event = Quit(msg.wParam)
-        return
+
+    for win.PeekMessageW(&msg, nil, 0, 0, win.PM_REMOVE){
+        if msg.message == win.WM_QUIT {
+            event = Quit(msg.wParam)
+            return
+        }
+        win.TranslateMessage(&msg)
+        win.DispatchMessageW(&msg)
     }
-    win.TranslateMessage(&msg)
-    win.DispatchMessageW(&msg)
 
     if que.len(g.event_queue) > 0 {
         event = que.dequeue(&g.event_queue)

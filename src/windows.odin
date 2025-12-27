@@ -7,11 +7,10 @@ import win "core:sys/windows"
 import que "core:container/queue"
 
 // TODO: Make multiple windows work in a way where each window has it's own event queue
-//       and they can be polled separately
+//       and they can be polled independently
 
 @(private = "package")
 WindowClass :: win.WNDCLASSEXW
-
 
 
 @(private = "package")
@@ -141,6 +140,7 @@ WndProc :: proc "stdcall" (
         case win.WM_KEYDOWN:     create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
         case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
         case win.WM_CHAR:        
+            // We don't want random text input when typing with control down
             if !g.kb_state[.CONTROL] do add_event(TextInput { key = rune(wparam)})
 
         // -- Mouse events --
