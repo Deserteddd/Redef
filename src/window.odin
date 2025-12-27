@@ -170,7 +170,7 @@ destroy_window :: proc (w: ^Window, loc := #caller_location){
     // If a window was destroyed the window count can be decremented
     destroy_window_raw(w.handle, loc)
     if g.window_count == 0 {
-        destroy_graphics(g.graphics)
+        destroy_graphics()
     }
     unregister_window_class(w)
     free(w)

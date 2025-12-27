@@ -41,7 +41,7 @@ main :: proc() {
         t := math.sin(time.duration_milliseconds(rd.time_since_start())/200) / 2 + 0.5
         t = math.max(t, 0.2)
         rd.clear_buffer({f32(t), 0.2, 0.2, 1})
-        // rd.draw_triangle()
+        rd.draw_triangle()
         rd.frame_end()
     }
 

@@ -1,5 +1,4 @@
 package redef
-import "core:strings"
 import "core:fmt"
 import "core:log"
 import "base:runtime"
@@ -9,31 +8,12 @@ import que "core:container/queue"
 // TODO: Make multiple windows work in a way where each window has it's own event queue
 //       and they can be polled independently
 
+
+// -------------------------------------------
+//               Protected
+// -------------------------------------------
 @(private = "package")
 WindowClass :: win.WNDCLASSEXW
-
-
-@(private = "file")
-create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: bool) {
-    hinst: win.HMODULE = win.GetModuleHandleW(nil)
-    if hinst == nil {
-        log_win_err()
-        return {}, false
-    }
-    wc: win.WNDCLASSEXW
-    {   using win, wc
-        cbSize = size_of(wc)
-        style = CS_OWNDC
-        lpfnWndProc = handle_msg_setup
-        hInstance = auto_cast hinst
-        lpszClassName = name
-    }
-    if error := win.RegisterClassExW(&wc); error == 0 {
-        log_win_err()
-        return {}, false
-    }
-    return wc, true
-}
 
 @(private = "package")
 init_windows_window :: proc(window: ^Window) -> bool {
@@ -70,58 +50,29 @@ init_windows_window :: proc(window: ^Window) -> bool {
 }
 
 @(private = "package")
-// Returns: true if a valid windows error exited
-log_win_err :: proc(loc := #caller_location) -> bool {
-    err := win.GetLastError()
-    if err == 0 {
-        log.warnf("return value of log_win_err() should not be relied upon", location = loc)
-        return false
-    } 
-    pMsgBuf: [^]u16
-    ok := win.FormatMessageW(
-        win.FORMAT_MESSAGE_ALLOCATE_BUFFER |
-        win.FORMAT_MESSAGE_FROM_SYSTEM | win.FORMAT_MESSAGE_IGNORE_INSERTS,
-        nil, err, win.MAKELANGID(win.LANG_NEUTRAL, win.SUBLANG_DEFAULT),
-        transmute(win.LPWSTR)&pMsgBuf, 0, nil
-    )
-    if ok == 0 do panic("Unable to log error")
-    win_error_string16 := cstring16(pMsgBuf)
+unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
+    assert(w != nil)
+    ok := win.UnregisterClassW(string_to_cstring16(w.name), w.window_class.hInstance)
+    if !ok do log_win_err()
+}
 
-    error_string := fmt.aprintf("%v: %v", err, win_error_string16, allocator = context.temp_allocator)
-    error_string_16 := win.utf8_to_wstring(error_string)
-    log.errorf("Windows error %v", error_string, location = loc)
-    win.MessageBoxW(nil, error_string_16, "Error", win.MB_ICONERROR)
-    win.LocalFree(pMsgBuf)
+// Returns false if window was already destroyed
+@(private = "package")
+destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
+    if !win.IsWindow(win.HWND(handle)) {
+        return false
+    }
+    defer g.window_count -= 1
+    log.debug("Destroying window with handle:", handle, location = loc)
+    success := win.DestroyWindow(win.HWND(handle))
+    if !success do log_win_err(loc)
     return true
 }
 
-@(private = "package")
-handle_msg_setup :: proc "stdcall" (
-    hwnd: win.HWND,
-    msg: win.UINT,
-    wparam: win.WPARAM,
-    lparam: win.LPARAM
-) -> win.LRESULT {
-    context = runtime.default_context()
-    when ODIN_DEBUG {
-        context.logger = log.create_console_logger()
-    }
-    if msg == win.WM_NCCREATE {
-        pCreate: ^win.CREATESTRUCTW = transmute(^win.CREATESTRUCTW)lparam
-        pWnd: ^Window = auto_cast pCreate.lpCreateParams
-        win.SetLastError(0)
-        ok := win.SetWindowLongPtrW(hwnd, win.GWLP_USERDATA, transmute(win.LONG_PTR)pWnd)
-        if ok == 0 do if log_win_err() do return 0
-        win.SetLastError(0)
-        ok = win.SetWindowLongPtrW(hwnd, win.GWLP_WNDPROC, transmute(win.LONG_PTR)WndProc)
-        if ok == 0 do if log_win_err() do return 0
-        pWnd.window_class.lpfnWndProc = WndProc
-        return pWnd.window_class.lpfnWndProc(hwnd, msg, wparam, lparam)
-    }
-    return win.DefWindowProcW(hwnd, msg, wparam, lparam)
-}
-
-@(private = "package")
+// -------------------------------------------
+//               Private
+// -------------------------------------------
+@(private = "file")
 WndProc :: proc "stdcall" (
     hwnd: win.HWND,
     msg: win.UINT,
@@ -163,7 +114,7 @@ WndProc :: proc "stdcall" (
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-@(private = "package")
+@(private = "file")
 create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
     keycode := Keycode(wparam)
     mod: ModKeys
@@ -181,7 +132,7 @@ create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
     que.enqueue(&g.event_queue, event)
 }
 
-@(private = "package")
+@(private = "file")
 create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wparam: win.WPARAM = uintptr(0)) {
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
@@ -200,42 +151,81 @@ create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wpara
     })
 }
 
-// Returns false if window was already destroyed
-@(private = "package")
-destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
-    if !win.IsWindow(win.HWND(handle)) {
-        return false
+@(private = "file")
+create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: bool) {
+    hinst: win.HMODULE = win.GetModuleHandleW(nil)
+    if hinst == nil {
+        log_win_err()
+        return {}, false
     }
-    defer g.window_count -= 1
-    log.debug("Destroying window with handle:", handle, location = loc)
-    success := win.DestroyWindow(win.HWND(handle))
-    if !success do log_win_err(loc)
+    wc: win.WNDCLASSEXW
+    {   using win, wc
+        cbSize = size_of(wc)
+        style = CS_OWNDC
+        lpfnWndProc = handle_msg_setup
+        hInstance = auto_cast hinst
+        lpszClassName = name
+    }
+    if error := win.RegisterClassExW(&wc); error == 0 {
+        log_win_err()
+        return {}, false
+    }
+    return wc, true
+}
+
+@(private = "file")
+handle_msg_setup :: proc "stdcall" (
+    hwnd: win.HWND,
+    msg: win.UINT,
+    wparam: win.WPARAM,
+    lparam: win.LPARAM
+) -> win.LRESULT {
+    context = runtime.default_context()
+    when ODIN_DEBUG {
+        context.logger = log.create_console_logger()
+    }
+    if msg == win.WM_NCCREATE {
+        pCreate: ^win.CREATESTRUCTW = transmute(^win.CREATESTRUCTW)lparam
+        pWnd: ^Window = auto_cast pCreate.lpCreateParams
+        win.SetLastError(0)
+        ok := win.SetWindowLongPtrW(hwnd, win.GWLP_USERDATA, transmute(win.LONG_PTR)pWnd)
+        if ok == 0 do if log_win_err() do return 0
+        win.SetLastError(0)
+        ok = win.SetWindowLongPtrW(hwnd, win.GWLP_WNDPROC, transmute(win.LONG_PTR)WndProc)
+        if ok == 0 do if log_win_err() do return 0
+        pWnd.window_class.lpfnWndProc = WndProc
+        return pWnd.window_class.lpfnWndProc(hwnd, msg, wparam, lparam)
+    }
+    return win.DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+@(private = "package")
+// Returns: true if a valid windows error exited
+log_win_err :: proc(loc := #caller_location) -> bool {
+    err := win.GetLastError()
+    if err == 0 {
+        log.warnf("return value of log_win_err() should not be relied upon", location = loc)
+        return false
+    } 
+    pMsgBuf: [^]u16
+    ok := win.FormatMessageW(
+        win.FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        win.FORMAT_MESSAGE_FROM_SYSTEM | win.FORMAT_MESSAGE_IGNORE_INSERTS,
+        nil, err, win.MAKELANGID(win.LANG_NEUTRAL, win.SUBLANG_DEFAULT),
+        transmute(win.LPWSTR)&pMsgBuf, 0, nil
+    )
+    if ok == 0 do panic("Unable to log error")
+    win_error_string16 := cstring16(pMsgBuf)
+
+    error_string := fmt.aprintf("%v: %v", err, win_error_string16, allocator = context.temp_allocator)
+    error_string_16 := win.utf8_to_wstring(error_string)
+    log.errorf("Windows error %v", error_string, location = loc)
+    win.MessageBoxW(nil, error_string_16, "Error", win.MB_ICONERROR)
+    win.LocalFree(pMsgBuf)
     return true
 }
 
-@(private = "package")
-unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
-    assert(w != nil)
-    ok := win.UnregisterClassW(string_to_cstring16(w.name), w.window_class.hInstance)
-    if !ok do log_win_err()
-}
-
-@(private = "package")
-log_windows_message :: proc(msg: win.UINT, wparam: win.WPARAM, lparam: win.LPARAM, loc := #caller_location)  {
-    longest :: 196 / 8
-    message_builder  := strings.builder_make(context.temp_allocator)
-    message_litereal := fmt.aprint(WindowsMessage(msg), allocator = context.temp_allocator)
-    strings.write_string(&message_builder, message_litereal)
-    for _ in 0..=longest-len(message_litereal) do strings.write_rune(&message_builder, ' ')
-    strings.write_string(
-        &message_builder,
-        fmt.aprintf("LP: 0x%8x\t\tWP: 0x%8x", lparam, wparam, allocator = context.temp_allocator)
-    )
-    result := strings.to_string(message_builder)
-    log.debug(result, location = loc)
-}
-
-@(private = "package")
+@(private = "file")
 WindowsMessage :: enum win.UINT {
     WM_NULL                           = 0x0000,
     WM_CREATE                         = 0x0001,

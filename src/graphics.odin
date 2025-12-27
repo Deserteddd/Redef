@@ -1,11 +1,13 @@
 package redef
 
 import "core:log"
+import "core:strings"
 import "base:runtime"
 import d3d "vendor:directx/d3d11"
 import dxgi "vendor:directx/dxgi"
 import win "core:sys/windows"
 
+@(private = "package")
 Graphics :: struct {
     device:         ^d3d.IDevice,
     swapchain:      ^dxgi.ISwapChain,
@@ -17,6 +19,7 @@ Graphics :: struct {
 Vertex :: [2]f32
 
 draw_triangle :: proc() {
+    context.logger = log.create_console_logger()
     using g.graphics
 
     vertices := [?]Vertex {
@@ -40,14 +43,13 @@ draw_triangle :: proc() {
     ok := device->CreateBuffer(&vbo_desc, &sd, &vbo)
     gfx_check(ok)
 
-    
-
+    info_manager_set()
     stride: u32 = size_of(Vertex)
     offset: u32 = 0
     ctx->IASetVertexBuffers(0, 1, &vbo, &stride, &offset)
     
     ctx->Draw(3, 0)
-
+    info_manager_log()
 }
 
 clear_buffer :: proc(color: [4]f32) {
@@ -79,10 +81,12 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     using g.graphics
     // Initilaize graphics
+    creation_flags: d3d.CREATE_DEVICE_FLAGS = ODIN_DEBUG ? {.DEBUG} : {}
+
     result := d3d.CreateDeviceAndSwapChain(
         nil,
         d3d.DRIVER_TYPE.HARDWARE,
-        nil, {}, nil, 0,
+        nil, creation_flags, nil, 0,
         d3d.SDK_VERSION,
         &sd,
         &swapchain,
@@ -96,8 +100,7 @@ sd: dxgi.SWAP_CHAIN_DESC
     gfx_check(result)
     result = device->CreateRenderTargetView(backbuffer, nil, &target)
     gfx_check(result)
-    result = d3d.HRESULT(backbuffer->Release())
-    gfx_check(result)
+    backbuffer->Release()
 
     create_info_manager()
 
@@ -105,23 +108,25 @@ sd: dxgi.SWAP_CHAIN_DESC
 }
 
 @(private = "package")
-destroy_graphics :: proc(graphics: Graphics) {
-    using graphics
+destroy_graphics :: proc() {
+    using g.graphics
     if ODIN_DEBUG do context.logger = log.create_console_logger()
     log.info("Destroying graphics subsystem")
 
     assert(device != nil)
     assert(swapchain != nil)
     assert(ctx != nil)
-    info_manager.info_queue->Release()
     device->Release()
     swapchain->Release()
-
     ctx->Release()
+
+    info_manager.info_queue->Release()
+
 
     log.info("Destroyed graphics subsystem")
 }
 
+@(private = "file")
 gfx_check :: proc(hresult: dxgi.HRESULT, loc := #caller_location) {
     when !ODIN_DEBUG {
         ensure(hresult == 0, loc = loc)
@@ -129,26 +134,52 @@ gfx_check :: proc(hresult: dxgi.HRESULT, loc := #caller_location) {
         context.logger = log.create_console_logger()
         if hresult != 0 {
             log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
-            runtime.trap()
+            // runtime.trap()
         }
     }
 }
 
+@(private = "file")
 DXGIInfoManager :: struct {
     next: u64,
     info_queue: ^dxgi.IInfoQueue,
 }
 
-get_messages :: proc() -> []string {
-    return nil
+import "core:mem"
+
+@(private = "file")
+info_manager_log :: proc(loc := #caller_location) {
+    using g.graphics.info_manager
+    end := info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
+    ok: dxgi.HRESULT
+    for i: u64  = next; i < end; i+=1 {
+        hr: dxgi.HRESULT
+        message_length: uint
+        ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, nil, &message_length)
+
+        message := new(dxgi.INFO_QUEUE_MESSAGE) 
+        defer free(message)
+        ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, message, &message_length)
+        gfx_check(ok)
+        message_string := strings.string_from_null_terminated_ptr(message.pDescription, int(message_length))
+        log.errorf("D3D11 Error: \"%v\"", message_string, location = loc)
+    }
 }
 
+@(private = "file")
+info_manager_set :: proc() {
+    using g.graphics.info_manager
+    next = info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
+}
+
+@(private = "file")
 create_info_manager :: proc() {
     assert(g.graphics.info_manager.info_queue == nil)
     ok := dxgi.DXGIGetDebugInterface1(0, dxgi.IInfoQueue_UUID, cast(^rawptr)&g.graphics.info_manager.info_queue)
     gfx_check(ok)
 }
 
+@(private = "file")
 DXGIError :: enum dxgi.HRESULT{
     ACCESS_DENIED                = dxgi.HRESULT(-2005270485), //0x887A002B
     ACCESS_LOST                  = dxgi.HRESULT(-2005270490), //0x887A0026
