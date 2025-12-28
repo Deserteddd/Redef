@@ -4,6 +4,7 @@ import "core:log"
 import "core:strings"
 import "base:runtime"
 import d3d "vendor:directx/d3d11"
+import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
 import win "core:sys/windows"
 
@@ -13,19 +14,32 @@ Graphics :: struct {
     swapchain:      ^dxgi.ISwapChain,
     ctx:            ^d3d.IDeviceContext,
     target:         ^d3d.IRenderTargetView,
-    info_manager:   DXGIInfoManager
+    viewport:       d3d.VIEWPORT,
+    info_manager:   DXGIInfoManager,
+    vert_shader:    VertexShader,
+    pixel_shader:   PixelShader,
 }
 
-Vertex :: [2]f32
+VertexShader :: struct {
+    shader: ^d3d.IVertexShader,
+    input_element_desc: []d3d.INPUT_ELEMENT_DESC,
+    layout: ^d3d.IInputLayout
+}
+PixelShader :: ^d3d.IPixelShader
+
+Vertex :: struct {
+    pos:   [2]f32,
+    color: [4]f32
+}
 
 draw_triangle :: proc() {
     context.logger = log.create_console_logger()
     using g.graphics
 
     vertices := [?]Vertex {
-        {0, 0.5},
-        {0.5, -0.5},
-        {-0.5, -0.5}
+        {{0, 0.5},    {1, 0, 0, 1}},
+        {{0.5, -0.5}, {0, 1, 0, 1}},
+        {{-0.5, -0.5}, {0, 0, 1, 1}}
     }
 
 
@@ -44,9 +58,22 @@ draw_triangle :: proc() {
     gfx_check(ok)
 
     info_manager_set()
+    ctx->IASetPrimitiveTopology(.TRIANGLELIST)
+    ctx->IASetInputLayout(vert_shader.layout)
+
     stride: u32 = size_of(Vertex)
     offset: u32 = 0
     ctx->IASetVertexBuffers(0, 1, &vbo, &stride, &offset)
+
+    ctx->VSSetShader(vert_shader.shader, nil, 0)
+    ctx->RSSetViewports(1, &viewport) 
+    ctx->PSSetShader(pixel_shader, nil, 0)
+
+    targets: []^d3d.IRenderTargetView = {
+        g.graphics.target
+    }
+    ctx->OMSetRenderTargets(1, raw_data(targets), nil)
+
     
     ctx->Draw(3, 0)
     info_manager_log()
@@ -63,6 +90,47 @@ frame_end :: proc() {
     swapchain->Present(1, {})
 }
 
+import "core:slice"
+shaders_hlsl := #load("shaders/src/shaders.hlsl")
+create_shader :: proc() {
+	vs_blob: ^d3d.IBlob
+	ok := d3dc.Compile(raw_data(shaders_hlsl), len(shaders_hlsl), "shaders.hlsl", nil, nil, "vs_main", "vs_5_0", 0, 0, &vs_blob, nil)
+    gfx_check(ok)
+    assert(vs_blob != nil)
+
+    vert_shader: ^d3d.IVertexShader
+    ok = g.graphics.device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nil, &vert_shader)
+    gfx_check(ok)
+    assert(vert_shader != nil)
+    
+	ie_descriptions := [?]d3d.INPUT_ELEMENT_DESC{
+        { "POS", 0, .R32G32_FLOAT,    0, 0,                          .VERTEX_DATA, 0 },
+        { "COL", 0, .R32G32B32_FLOAT, 0, d3d.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+    }
+	input_element_desc := slice.clone(ie_descriptions[:])
+    assert(len(input_element_desc) == len(ie_descriptions))
+
+	input_layout: ^d3d.IInputLayout
+	ok = g.graphics.device->CreateInputLayout(&input_element_desc[0], len(ie_descriptions), vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &input_layout)
+    gfx_check(ok)
+    assert(input_layout != nil)
+
+	ps_blob: ^d3d.IBlob
+	d3dc.Compile(raw_data(shaders_hlsl), len(shaders_hlsl), "shaders.hlsl", nil, nil, "ps_main", "ps_5_0", 0, 0, &ps_blob, nil)
+    gfx_check(ok)
+    assert(vs_blob != nil)
+
+	pixel_shader: ^d3d.IPixelShader
+	g.graphics.device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nil, &pixel_shader)
+
+    g.graphics.vert_shader = {
+        vert_shader,
+        input_element_desc,
+        input_layout
+    }
+    g.graphics.pixel_shader = pixel_shader
+
+}
 
 
 @(private = "package")
@@ -103,6 +171,12 @@ sd: dxgi.SWAP_CHAIN_DESC
     backbuffer->Release()
 
     create_info_manager()
+    create_shader()
+    viewport = d3d.VIEWPORT{
+        0, 0,
+        f32(window.size.x), f32(window.size.y),
+        0, 1,
+    }
 
     log.info("Initialized graphics")
 }
@@ -134,7 +208,7 @@ gfx_check :: proc(hresult: dxgi.HRESULT, loc := #caller_location) {
         context.logger = log.create_console_logger()
         if hresult != 0 {
             log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
-            // runtime.trap()
+            runtime.trap()
         }
     }
 }

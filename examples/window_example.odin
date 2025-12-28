@@ -38,9 +38,8 @@ main :: proc() {
                     log.debugf("Mouse event %v at position %v. mod: %v", ev.type, ev.position, ev.mod)
             }
         }
-        t := math.sin(time.duration_milliseconds(rd.time_since_start())/200) / 2 + 0.5
-        t = math.max(t, 0.2)
-        rd.clear_buffer({f32(t), 0.2, 0.2, 1})
+        t := math.sin(time.duration_milliseconds(rd.time_since_start())/225) / 6 + 0.35
+        rd.clear_buffer({f32(t), 0.2, f32(t), 1})
         rd.draw_triangle()
         rd.frame_end()
     }
