@@ -1,6 +1,6 @@
 package redef_example
 
-import "core:log"
+import "core:fmt"
 import "base:runtime"
 import rd "../src"
 
@@ -12,16 +12,22 @@ Vertex :: struct {
 shaders_hlsl := #load("shaders/shaders.hlsl")
 
 main :: proc() {
-    when !ODIN_DEBUG do context.logger = log.create_console_logger()
 
     window := rd.create_window("Big pp window", 640, 480, ODIN_DEBUG); assert(window != nil)
     defer rd.destroy_window(window)
-    vs := rd.load_vertex_shader(shaders_hlsl, "vs_main", Vertex)
-    assert(vs != nil)
-    ps1 := rd.load_pixel_shader(shaders_hlsl, "ps_main")
-    assert(ps1 != nil)
-    ps2 := rd.load_pixel_shader(shaders_hlsl, "ps_main2")
-    assert(ps2 != nil)
+    ok: bool
+    vs: rd.VertexShader
+    vs, ok = rd.load_vertex_shader(shaders_hlsl, "vs_main", Vertex); assert(ok)
+    ps1, ps2: rd.PixelShader
+    ps1, ok = rd.load_pixel_shader(shaders_hlsl, "ps_main");         assert(ok)
+    ps2, ok = rd.load_pixel_shader(shaders_hlsl, "ps_main2");        assert(ok)
+    tri := []Vertex {
+        {{   0,  0.5}, {1, 0, 0, 1}},
+        {{ 0.5, -0.5}, {0, 1, 0, 1}},
+        {{-0.5, -0.5}, {0, 0, 1, 1}},
+    }
+
+    vbo := rd.create_vertex_buffer(&tri)
 
     running := true
     frame: u32
@@ -37,24 +43,77 @@ main :: proc() {
         for event in rd.pump_event_iter(window) {
             #partial switch ev in event {
                 case rd.Quit:
-                    log.debug("Received exit code:", ev)
+                    fmt.println("Received exit code:", ev)
                     running = false
                 
                 case rd.TextInput:
-                    log.debug("Text input:", ev.key)
+                    fmt.println("Text input:", ev.key)
                 case rd.KeyboardEvent:
-                    log.debug(ev.type, ev.key)
+                    fmt.println(ev.type, ev.key)
                     if ev.key == .C && .CONTROL in ev.mod {
                         running = false
                     }
                 case rd.MouseEvent:
-                    log.debugf("Mouse event %v at position %v. mod: %v", ev.type, ev.position, ev.mod)
+                    fmt.println("Mouse event %v at position %v. mod: %v", ev.type, ev.position, ev.mod)
             }
         }
         rd.clear_buffer({0.2, 0.2, 0.2, 1})
-        rd.draw_triangle(vs, ps_switch ? ps1 : ps2)
+        rd.draw(vs, ps_switch ? ps1 : ps2, vbo)
         rd.frame_end()
     }
 
 }
 
+vertices := []Vertex{
+    // Center (white)
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+
+    // Top outer
+    {{ 0.0,  0.6}, {1, 0, 0, 1}},
+    {{ 0.14, 0.2}, {1, 0.5, 0, 1}},
+
+    // Upper-right outer
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{ 0.14, 0.2}, {1, 0.5, 0, 1}},
+    {{ 0.5,  0.15},{1, 1, 0, 1}},
+
+    // Lower-right inner
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{ 0.5,  0.15},{1, 1, 0, 1}},
+    {{ 0.23,-0.05},{0, 1, 0, 1}},
+
+    // Bottom-right outer
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{ 0.23,-0.05},{0, 1, 0, 1}},
+    {{ 0.3, -0.45},{0, 1, 1, 1}},
+
+    // Bottom inner
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{ 0.3, -0.45},{0, 1, 1, 1}},
+    {{ 0.0, -0.2}, {0, 0, 1, 1}},
+
+    // Bottom-left outer
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{ 0.0, -0.2}, {0, 0, 1, 1}},
+    {{-0.3, -0.45},{0.5, 0, 1, 1}},
+
+    // Lower-left inner
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{-0.3, -0.45},{0.5, 0, 1, 1}},
+    {{-0.23,-0.05},{1, 0, 1, 1}},
+
+    // Upper-left outer
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{-0.23,-0.05},{1, 0, 1, 1}},
+    {{-0.5,  0.15},{1, 0, 0.5, 1}},
+
+    // Back to top inner
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{-0.5,  0.15},{1, 0, 0.5, 1}},
+    {{-0.14, 0.2}, {1, 0, 0, 1}},
+
+    // Close the loop
+    {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+    {{-0.14, 0.2}, {1, 0, 0, 1}},
+    {{ 0.0,  0.6}, {1, 0, 0, 1}},
+};

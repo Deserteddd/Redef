@@ -17,6 +17,6 @@ vs_out vs_main(vs_in input) {
 float4 ps_main(vs_out input) : SV_Target {
 	return input.color;
 }
-float4 ps_main2() : SV_Target {
-	return 1;
+float4 ps_main2(vs_out input) : SV_Target {
+    return 1 - input.color;
 }
