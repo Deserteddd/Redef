@@ -1,11 +1,11 @@
 
 struct vs_in {
-	float2 position : POS;
-    float4 color    : COL;
+	float2 position : pos;
+    float4 color    : col;
 };
 struct vs_out {
-	float4 position : SV_POSITION;
-    float4 color    : COL;
+	float4 position : SV_Position;
+    float4 color    : col;
 };
 
 vs_out vs_main(vs_in input) {
@@ -14,6 +14,9 @@ vs_out vs_main(vs_in input) {
     output.color = input.color;
 	return output;
 }
-float4 ps_main(vs_out input) : SV_TARGET {
+float4 ps_main(vs_out input) : SV_Target {
 	return input.color;
+}
+float4 ps_main2() : SV_Target {
+	return 1;
 }

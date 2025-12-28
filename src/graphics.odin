@@ -3,6 +3,7 @@ package redef
 import "core:log"
 import "core:strings"
 import "base:runtime"
+import "core:reflect"
 import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
@@ -16,38 +17,76 @@ Graphics :: struct {
     target:         ^d3d.IRenderTargetView,
     viewport:       d3d.VIEWPORT,
     info_manager:   DXGIInfoManager,
-    vert_shader:    VertexShader,
-    pixel_shader:   PixelShader,
 }
 
-VertexShader :: struct {
-    shader: ^d3d.IVertexShader,
-    input_element_desc: []d3d.INPUT_ELEMENT_DESC,
-    layout: ^d3d.IInputLayout
-}
-PixelShader :: ^d3d.IPixelShader
-
-Vertex :: struct {
-    pos:   [2]f32,
-    color: [4]f32
+DEBUG_VERTEX :: struct {
+    pos: vec2,
+    col: vec4
 }
 
-draw_triangle :: proc() {
+draw_triangle :: proc(vertex_shader: ^VertexShader, pixel_shader: ^PixelShader) {
     context.logger = log.create_console_logger()
     using g.graphics
+    vertices := [?]DEBUG_VERTEX{
+        // Center (white)
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
 
-    vertices := [?]Vertex {
-        {{0, 0.5},    {1, 0, 0, 1}},
-        {{0.5, -0.5}, {0, 1, 0, 1}},
-        {{-0.5, -0.5}, {0, 0, 1, 1}}
-    }
+        // Top outer
+        {{ 0.0,  0.6}, {1, 0, 0, 1}},
+        {{ 0.14, 0.2}, {1, 0.5, 0, 1}},
+
+        // Upper-right outer
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{ 0.14, 0.2}, {1, 0.5, 0, 1}},
+        {{ 0.5,  0.15},{1, 1, 0, 1}},
+
+        // Lower-right inner
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{ 0.5,  0.15},{1, 1, 0, 1}},
+        {{ 0.23,-0.05},{0, 1, 0, 1}},
+
+        // Bottom-right outer
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{ 0.23,-0.05},{0, 1, 0, 1}},
+        {{ 0.3, -0.45},{0, 1, 1, 1}},
+
+        // Bottom inner
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{ 0.3, -0.45},{0, 1, 1, 1}},
+        {{ 0.0, -0.2}, {0, 0, 1, 1}},
+
+        // Bottom-left outer
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{ 0.0, -0.2}, {0, 0, 1, 1}},
+        {{-0.3, -0.45},{0.5, 0, 1, 1}},
+
+        // Lower-left inner
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{-0.3, -0.45},{0.5, 0, 1, 1}},
+        {{-0.23,-0.05},{1, 0, 1, 1}},
+
+        // Upper-left outer
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{-0.23,-0.05},{1, 0, 1, 1}},
+        {{-0.5,  0.15},{1, 0, 0.5, 1}},
+
+        // Back to top inner
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{-0.5,  0.15},{1, 0, 0.5, 1}},
+        {{-0.14, 0.2}, {1, 0, 0, 1}},
+
+        // Close the loop
+        {{ 0.0,  0.0}, {0.2, 0.2, 0.2, 1}},
+        {{-0.14, 0.2}, {1, 0, 0, 1}},
+        {{ 0.0,  0.6}, {1, 0, 0, 1}},
+    };
 
 
 	vbo_desc := d3d.BUFFER_DESC{
 		BindFlags = {.VERTEX_BUFFER},
 		Usage     = .DEFAULT,
 		ByteWidth = size_of(vertices),
-        StructureByteStride = size_of(Vertex)
+        StructureByteStride = size_of(DEBUG_VERTEX)
 	}
 
     sd := d3d.SUBRESOURCE_DATA {}
@@ -57,25 +96,21 @@ draw_triangle :: proc() {
     ok := device->CreateBuffer(&vbo_desc, &sd, &vbo)
     gfx_check(ok)
 
-    info_manager_set()
     ctx->IASetPrimitiveTopology(.TRIANGLELIST)
-    ctx->IASetInputLayout(vert_shader.layout)
+    ctx->IASetInputLayout(vertex_shader.layout)
 
-    stride: u32 = size_of(Vertex)
+    stride: u32 = size_of(DEBUG_VERTEX)
     offset: u32 = 0
     ctx->IASetVertexBuffers(0, 1, &vbo, &stride, &offset)
 
-    ctx->VSSetShader(vert_shader.shader, nil, 0)
+    ctx->VSSetShader(vertex_shader.shader, nil, 0)
     ctx->RSSetViewports(1, &viewport) 
-    ctx->PSSetShader(pixel_shader, nil, 0)
+    ctx->PSSetShader(pixel_shader^, nil, 0)
 
-    targets: []^d3d.IRenderTargetView = {
-        g.graphics.target
-    }
-    ctx->OMSetRenderTargets(1, raw_data(targets), nil)
+    ctx->OMSetRenderTargets(1, &target, nil)
 
-    
-    ctx->Draw(3, 0)
+    info_manager_set()
+    ctx->Draw(len(vertices), 0)
     info_manager_log()
 }
 
@@ -90,12 +125,53 @@ frame_end :: proc() {
     swapchain->Present(1, {})
 }
 
-import "core:slice"
-shaders_hlsl := #load("shaders/src/shaders.hlsl")
-create_shader :: proc() {
-	vs_blob: ^d3d.IBlob
-	ok := d3dc.Compile(raw_data(shaders_hlsl), len(shaders_hlsl), "shaders.hlsl", nil, nil, "vs_main", "vs_5_0", 0, 0, &vs_blob, nil)
-    gfx_check(ok)
+
+VertexShader :: struct {
+    shader: ^d3d.IVertexShader,
+    layout: ^d3d.IInputLayout,
+}
+
+PixelShader :: ^d3d.IPixelShader
+
+@(private = "file")
+print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .Info, loc := #caller_location) {
+    blob_str := strings.clone_from_ptr(
+        cast(^u8)blob->GetBufferPointer(), 
+        int(blob->GetBufferSize()), 
+        context.temp_allocator
+    )
+    if blob_str == "" {
+        log.info("Empty", location = loc)
+    } else {
+        err_builder := strings.builder_make(context.temp_allocator)
+        strings.write_rune(&err_builder, '"')
+        for line in strings.split_lines_iterator(&blob_str) {
+            strings.write_string(&err_builder, line)
+        }
+        strings.pop_rune(&err_builder)
+        strings.write_rune(&err_builder, '"')
+        log.log(level, strings.to_string(err_builder), location = loc)
+    }
+}
+
+load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: typeid, loc := #caller_location) -> ^VertexShader {
+    when ODIN_DEBUG do context.logger = log.create_console_logger()
+    ok: dxgi.HRESULT
+    entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
+    vs_blob: ^d3d.IBlob
+    err_blob: ^d3d.IBlob
+    ok = d3dc.Compile(
+        raw_data(code), 
+        len(code), nil, nil, nil, 
+        entry_point_cstr, 
+        "vs_5_0", 0, 0, 
+        &vs_blob, 
+        &err_blob
+    )
+    if ok != 0 {
+        print_shader_compilation_message(err_blob, .Error)
+        return nil
+    }
     assert(vs_blob != nil)
 
     vert_shader: ^d3d.IVertexShader
@@ -103,33 +179,80 @@ create_shader :: proc() {
     gfx_check(ok)
     assert(vert_shader != nil)
     
-	ie_descriptions := [?]d3d.INPUT_ELEMENT_DESC{
-        { "POS", 0, .R32G32_FLOAT,    0, 0,                          .VERTEX_DATA, 0 },
-        { "COL", 0, .R32G32B32_FLOAT, 0, d3d.APPEND_ALIGNED_ELEMENT, .VERTEX_DATA, 0 },
+    input_element_desc := get_vb_layout(vertex_type)
+    input_layout: ^d3d.IInputLayout
+    ok = g.graphics.device->CreateInputLayout(
+        &input_element_desc[0], 
+        u32(len(input_element_desc)), 
+        vs_blob->GetBufferPointer(),
+        vs_blob->GetBufferSize(), 
+        &input_layout
+    )
+    if ok != 0 {
+        print_input_layout_error(vertex_type)
+        return nil
     }
-	input_element_desc := slice.clone(ie_descriptions[:])
-    assert(len(input_element_desc) == len(ie_descriptions))
-
-	input_layout: ^d3d.IInputLayout
-	ok = g.graphics.device->CreateInputLayout(&input_element_desc[0], len(ie_descriptions), vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), &input_layout)
-    gfx_check(ok)
     assert(input_layout != nil)
+    vertex_shader := new(VertexShader)
+    vertex_shader.shader = vert_shader
+    vertex_shader.layout = input_layout
+    return vertex_shader
+}
 
-	ps_blob: ^d3d.IBlob
-	d3dc.Compile(raw_data(shaders_hlsl), len(shaders_hlsl), "shaders.hlsl", nil, nil, "ps_main", "ps_5_0", 0, 0, &ps_blob, nil)
-    gfx_check(ok)
-    assert(vs_blob != nil)
-
-	pixel_shader: ^d3d.IPixelShader
-	g.graphics.device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nil, &pixel_shader)
-
-    g.graphics.vert_shader = {
-        vert_shader,
-        input_element_desc,
-        input_layout
+load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_location) -> ^PixelShader {
+    entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
+    ps_blob: ^d3d.IBlob
+    err_blob: ^d3d.IBlob
+    ok := d3dc.Compile(raw_data(code), len(code), nil, nil, nil, entry_point_cstr, "ps_5_0", 0, 0, &ps_blob, &err_blob)
+    if ok != 0 {
+        print_shader_compilation_message(err_blob, .Error)
+        return {}
     }
-    g.graphics.pixel_shader = pixel_shader
+    assert(ps_blob != nil)
 
+    pixel_shader := new(^d3d.IPixelShader)
+    ok = g.graphics.device->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(), nil, pixel_shader)
+    gfx_check(ok)
+    return pixel_shader
+}
+
+print_input_layout_error :: proc($vertex_type: typeid, loc := #caller_location) {
+    err_builder := strings.builder_make(context.temp_allocator)
+    strings.write_string(&err_builder, "Error creating input layout:\n")
+    strings.write_string(&err_builder, "Make sure shader semantics match the names of the vertex struct:\n")
+    input_names := reflect.struct_field_names(vertex_type)
+    
+    for name in input_names {
+        strings.write_string(
+            &err_builder, 
+            fmt.aprintfln("\t%v", name, allocator = context.temp_allocator)
+        )
+    }
+    strings.pop_rune(&err_builder)
+    log.error(strings.to_string(err_builder), location = loc)
+}
+
+get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator) -> []d3d.INPUT_ELEMENT_DESC {
+    element_info_from_type :: proc(type: ^runtime.Type_Info) -> dxgi.FORMAT {
+        switch type {
+            case type_info_of(vec2): return .R32G32_FLOAT
+            case type_info_of(vec3): return .R32G32B32_FLOAT
+            case type_info_of(vec4): return .R32G32B32A32_FLOAT
+            case type_info_of(u32):  return .R32_UINT
+            case: return .UNKNOWN
+        }
+    }
+    fields := reflect.struct_field_types(vertex_type)
+    names  := reflect.struct_field_names(vertex_type)
+    data := make([]d3d.INPUT_ELEMENT_DESC, len(fields) > 0 ? len(fields) : 1, context.temp_allocator)
+
+    for field, i in fields {
+        data[i].SemanticName = strings.unsafe_string_to_cstring(names[i])
+        data[i].AlignedByteOffset = i == 0 ? 0 : d3d.APPEND_ALIGNED_ELEMENT
+        data[i].Format = element_info_from_type(field)
+        data[i].InputSlotClass = .VERTEX_DATA
+    }
+    return data
 }
 
 
@@ -171,7 +294,7 @@ sd: dxgi.SWAP_CHAIN_DESC
     backbuffer->Release()
 
     create_info_manager()
-    create_shader()
+
     viewport = d3d.VIEWPORT{
         0, 0,
         f32(window.size.x), f32(window.size.y),
@@ -200,14 +323,20 @@ destroy_graphics :: proc() {
     log.info("Destroyed graphics subsystem")
 }
 
+import "core:fmt"
+
 @(private = "file")
-gfx_check :: proc(hresult: dxgi.HRESULT, loc := #caller_location) {
+gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None",loc := #caller_location) {
     when !ODIN_DEBUG {
         ensure(hresult == 0, loc = loc)
     } else {
         context.logger = log.create_console_logger()
         if hresult != 0 {
-            log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
+            if _, ok := fmt.enum_value_to_string(DXGIError(hresult)); !ok {
+                log.errorf("Generic Error: %v", error, location = loc)
+            } else {
+                log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
+            }
             runtime.trap()
         }
     }

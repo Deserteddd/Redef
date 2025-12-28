@@ -76,20 +76,6 @@ Event :: union {
     TextInput
 }
 
-@(private = "package")
-Global :: struct {
-    kb_state:       KeyboardState,
-    event_queue:    EventQueue,
-    mouse_position: [2]i32,
-    window_count:   u32,
-    graphics:       Graphics,
-    dt:             time.Time,
-    elapsed:        time.Time,
-}
-
-@(private = "package")
-g: Global
-
 
 @(private = "package")
 add_event :: proc(event: Event, loc := #caller_location) { 
