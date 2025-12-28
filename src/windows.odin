@@ -80,9 +80,7 @@ WndProc :: proc "stdcall" (
     lparam: win.LPARAM
 ) -> win.LRESULT {
     context = runtime.default_context()
-    when ODIN_DEBUG {
-        context.logger = log.create_console_logger(allocator = context.temp_allocator)
-    }
+    context.logger = g.logger
     switch msg {
         case win.WM_CLOSE:         ok := destroy_window_raw(hwnd); assert(ok)
         case win.WM_DESTROY:       win.PostQuitMessage(69)
@@ -181,9 +179,6 @@ handle_msg_setup :: proc "stdcall" (
     lparam: win.LPARAM
 ) -> win.LRESULT {
     context = runtime.default_context()
-    when ODIN_DEBUG {
-        context.logger = log.create_console_logger()
-    }
     if msg == win.WM_NCCREATE {
         pCreate: ^win.CREATESTRUCTW = transmute(^win.CREATESTRUCTW)lparam
         pWnd: ^Window = auto_cast pCreate.lpCreateParams

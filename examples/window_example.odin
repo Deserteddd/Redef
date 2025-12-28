@@ -12,7 +12,6 @@ Vertex :: struct {
 shaders_hlsl := #load("shaders/shaders.hlsl")
 
 main :: proc() {
-
     window := rd.create_window("Big pp window", 640, 480, ODIN_DEBUG); assert(window != nil)
     defer rd.destroy_window(window)
     ok: bool
@@ -45,16 +44,10 @@ main :: proc() {
                 case rd.Quit:
                     fmt.println("Received exit code:", ev)
                     running = false
-                
-                case rd.TextInput:
-                    fmt.println("Text input:", ev.key)
                 case rd.KeyboardEvent:
-                    fmt.println(ev.type, ev.key)
                     if ev.key == .C && .CONTROL in ev.mod {
                         running = false
                     }
-                case rd.MouseEvent:
-                    fmt.println("Mouse event %v at position %v. mod: %v", ev.type, ev.position, ev.mod)
             }
         }
         rd.clear_buffer({0.2, 0.2, 0.2, 1})

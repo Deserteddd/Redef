@@ -94,11 +94,8 @@ get_dt :: proc() -> time.Duration {
 }
 
 create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window {
-    when ODIN_DEBUG {
-        context.logger = log.create_console_logger(allocator = context.temp_allocator)
-    } else {
-        context.logger = log.nil_logger()
-    }
+    if debug && g.window_count == 0 do g.logger = log.create_console_logger()
+    context.logger = g.logger
 
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
@@ -111,7 +108,7 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     window.name = name
     init_windows_window(window)
     if g.window_count == 0 {
-        init_graphics(window)
+        init_graphics(window, debug)
         g.elapsed = time.now()
         g.dt = time.now()
     }
@@ -121,11 +118,9 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     return window
 }
 
-string_to_cstring16 :: proc(s: string, allocator := context.temp_allocator) -> cstring16 {
-    return cstring16(raw_data(win.utf8_to_utf16(s, allocator)))
-}
 
 pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
+    context.logger = g.logger
     msg: win.MSG
 
     for win.PeekMessageW(&msg, nil, 0, 0, win.PM_REMOVE){
@@ -146,19 +141,13 @@ pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
 }
 
 destroy_window :: proc (w: ^Window, loc := #caller_location){
-    when ODIN_DEBUG {
-        context = runtime.default_context()
-        context.logger = log.create_console_logger(allocator = context.temp_allocator)
-    } else {
-        context.logger = log.nil_logger()
-    }
-
     // If a window was destroyed the window count can be decremented
+    context.logger = g.logger
     destroy_window_raw(w.handle, loc)
     if g.window_count == 0 {
-        destroy_graphics()
+        destroy_graphics(loc)
     }
-    unregister_window_class(w)
+    unregister_window_class(w, loc)
     free(w)
 }
 

@@ -31,10 +31,8 @@ VertexBuffer :: struct {
     stride: u32
 }
 
-create_vertex_buffer :: proc(vertices: ^[]$T) -> ^VertexBuffer {
-    context.logger = log.create_console_logger()
-    log.debug(vertices^)
-    ensure(vertices != nil)
+create_vertex_buffer :: proc(vertices: ^[]$T) -> VertexBuffer {
+    ensure(vertices^ != nil)
     len_bytes := u32(len(vertices) * size_of(T))
 	vbo_desc := d3d.BUFFER_DESC{
 		BindFlags = {.VERTEX_BUFFER},
@@ -50,22 +48,23 @@ create_vertex_buffer :: proc(vertices: ^[]$T) -> ^VertexBuffer {
     ok := g.graphics.device->CreateBuffer(&vbo_desc, &sd, &vbo)
     gfx_check(ok)
 
-    vertex_buffer := new(VertexBuffer)
-    vertex_buffer.buf = vbo
-    vertex_buffer.num_vertices = u32(len(vertices))
-    vertex_buffer.stride = size_of(T)
-    return vertex_buffer
+    return VertexBuffer {
+        vbo,
+        u32(len(vertices)),
+        size_of(T)
+    }
 }
 
-draw :: proc(vs: VertexShader, ps: PixelShader, vbo: ^VertexBuffer) {
-    context.logger = log.create_console_logger()
+draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer) {
+    context.logger = g.logger
     using g.graphics
 
     ctx->IASetPrimitiveTopology(.TRIANGLELIST)
     ctx->IASetInputLayout(vs.layout)
-
+    stride := vbo.stride
+    buffer := vbo.buf
     offset: u32 = 0
-    ctx->IASetVertexBuffers(0, 1, &vbo.buf, &vbo.stride, &offset)
+    ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
 
     ctx->VSSetShader(vs.shader, nil, 0)
     ctx->RSSetViewports(1, &viewport) 
@@ -119,12 +118,12 @@ print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .I
 }
 
 load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: typeid, loc := #caller_location) -> (VertexShader, bool) {
-    when ODIN_DEBUG do context.logger = log.create_console_logger()
-    ok: dxgi.HRESULT
+    context.logger = g.logger
+
     entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
-    vs_blob: ^d3d.IBlob
+    vs_blob:  ^d3d.IBlob
     err_blob: ^d3d.IBlob
-    ok = d3dc.Compile(
+    ok := d3dc.Compile(
         raw_data(code), 
         len(code), nil, nil, nil, 
         entry_point_cstr, 
@@ -133,7 +132,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
         &err_blob
     )
     if ok != 0 {
-        print_shader_compilation_message(err_blob, .Error)
+        print_shader_compilation_message(err_blob, .Error, loc = loc)
         return {}, false
     }
     assert(vs_blob != nil)
@@ -177,6 +176,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
 }
 
 load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_location) -> (PixelShader, bool) {
+    context.logger = g.logger
     entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
     ps_blob: ^d3d.IBlob
     err_blob: ^d3d.IBlob
@@ -218,7 +218,7 @@ get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator)
 
 
 @(private = "package")
-init_graphics :: proc(window: ^Window) {
+init_graphics :: proc(window: ^Window, debug: bool) {
 sd: dxgi.SWAP_CHAIN_DESC
     {
         using sd
@@ -233,7 +233,7 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     using g.graphics
     // Initilaize graphics
-    creation_flags: d3d.CREATE_DEVICE_FLAGS = ODIN_DEBUG ? {.DEBUG} : {}
+    creation_flags: d3d.CREATE_DEVICE_FLAGS = debug ? {.DEBUG} : {}
 
     result := d3d.CreateDeviceAndSwapChain(
         nil,
@@ -266,10 +266,9 @@ sd: dxgi.SWAP_CHAIN_DESC
 }
 
 @(private = "package")
-destroy_graphics :: proc() {
+destroy_graphics :: proc(loc := #caller_location) {
     using g.graphics
-    if ODIN_DEBUG do context.logger = log.create_console_logger()
-    log.info("Destroying graphics subsystem")
+    log.info("Destroying graphics subsystem", location = loc)
 
     assert(device != nil)
     assert(swapchain != nil)
@@ -280,8 +279,7 @@ destroy_graphics :: proc() {
 
     info_manager.info_queue->Release()
 
-
-    log.info("Destroyed graphics subsystem")
+    log.info("Destroyed graphics subsystem", location = loc)
 }
 
 import "core:fmt"
@@ -291,7 +289,6 @@ gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None",loc := #caller_l
     when !ODIN_DEBUG {
         ensure(hresult == 0, loc = loc)
     } else {
-        context.logger = log.create_console_logger()
         if hresult != 0 {
             if _, ok := fmt.enum_value_to_string(DXGIError(hresult)); !ok {
                 log.errorf("Generic Error: %v", error, location = loc)

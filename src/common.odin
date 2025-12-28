@@ -1,5 +1,7 @@
 package redef
 import "core:time"
+import "core:log"
+import win "core:sys/windows"
 
 vec2 :: [2]f32
 vec3 :: [3]f32
@@ -14,7 +16,13 @@ Global :: struct {
     graphics:       Graphics,
     dt:             time.Time,
     elapsed:        time.Time,
+    logger:         log.Logger
 }
 
 @(private = "package")
 g: Global
+
+@(private = "package")
+string_to_cstring16 :: proc(s: string, allocator := context.temp_allocator) -> cstring16 {
+    return cstring16(raw_data(win.utf8_to_utf16(s, allocator)))
+}
