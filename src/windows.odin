@@ -5,8 +5,12 @@ import "base:runtime"
 import win "core:sys/windows"
 import que "core:container/queue"
 
-// TODO: Make multiple windows work in a way where each window has it's own event queue
-//       and they can be polled independently
+/* TODO: 
+[]  Make multiple windows work in a way where each window has it's own event queue
+    and they can be polled independently. Graphics subsystem only supports one window for now.
+
+[]  Fix windows loading cursor on startup   
+*/
 
 
 // -------------------------------------------
@@ -83,7 +87,7 @@ WndProc :: proc "stdcall" (
     context.logger = g.logger
     switch msg {
         case win.WM_CLOSE:         ok := destroy_window_raw(hwnd); assert(ok)
-        case win.WM_DESTROY:       win.PostQuitMessage(69)
+        case win.WM_DESTROY:       win.PostQuitMessage(auto_cast wparam)
         
         // -- Keyboard events --
         case win.WM_KEYDOWN:     create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
@@ -108,6 +112,12 @@ WndProc :: proc "stdcall" (
         // Scroll
         case win.WM_MOUSEWHEEL: 
             create_mouse_event(.MWheel, lparam, wparam)
+        
+        case win.WM_MOUSEMOVE:
+            x := win.GET_X_LPARAM(lparam)
+            y := win.GET_Y_LPARAM(lparam)
+            g.mouse_position = {x, y}
+
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }

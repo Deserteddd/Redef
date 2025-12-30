@@ -6,6 +6,7 @@ import win "core:sys/windows"
 vec2 :: [2]f32
 vec3 :: [3]f32
 vec4 :: [4]f32
+mat4 :: matrix[4,4]f32
 
 @(private = "package")
 Global :: struct {

@@ -4,7 +4,7 @@ import "core:log"
 import "core:strings"
 import "base:runtime"
 import "core:reflect"
-import "core:mem"
+import dx "core:math/linalg/hlsl"
 import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
@@ -20,10 +20,12 @@ Graphics :: struct {
     info_manager:   DXGIInfoManager,
 }
 
-DEBUG_VERTEX :: struct {
-    pos: vec2,
-    col: vec4
+VertexShader :: struct {
+    shader: ^d3d.IVertexShader,
+    layout: ^d3d.IInputLayout,
 }
+
+PixelShader :: ^d3d.IPixelShader
 
 VertexBuffer :: struct {
     buf: ^d3d.IBuffer,
@@ -31,22 +33,48 @@ VertexBuffer :: struct {
     stride: u32
 }
 
+CBuffer :: ^d3d.IBuffer
+
+create_constant_buffer :: proc(data: ^$T) -> CBuffer { 
+    context.logger = g.logger
+    cb_desc := d3d.BUFFER_DESC{
+		BindFlags = {.CONSTANT_BUFFER},
+		Usage     = .DYNAMIC,
+        CPUAccessFlags = {.WRITE},
+		ByteWidth = size_of(data^),
+	}
+
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = data
+    }
+
+    cb: ^d3d.IBuffer
+    info_manager_set()
+    err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
+    gfx_check(err, "Constant buffer creation failed")
+    info_manager_log()
+    return cb
+} 
+
 create_vertex_buffer :: proc(vertices: ^[]$T) -> VertexBuffer {
+    context.logger = g.logger
     ensure(vertices^ != nil)
     len_bytes := u32(len(vertices) * size_of(T))
 	vbo_desc := d3d.BUFFER_DESC{
 		BindFlags = {.VERTEX_BUFFER},
 		Usage     = .DEFAULT,
 		ByteWidth = len_bytes,
-        StructureByteStride = size_of(T)
+        StructureByteStride = size_of(T),
 	}
 
-    sd := d3d.SUBRESOURCE_DATA {}
-    sd.pSysMem = raw_data(vertices^)
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = raw_data(vertices^)
+    }
 
     vbo: ^d3d.IBuffer
+    info_manager_set()
     ok := g.graphics.device->CreateBuffer(&vbo_desc, &sd, &vbo)
-    gfx_check(ok)
+    gfx_check(ok, "Vertex buffer creation failed")
 
     return VertexBuffer {
         vbo,
@@ -55,7 +83,7 @@ create_vertex_buffer :: proc(vertices: ^[]$T) -> VertexBuffer {
     }
 }
 
-draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer) {
+draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer, cb: ^CBuffer) {
     context.logger = g.logger
     using g.graphics
 
@@ -65,6 +93,8 @@ draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer) {
     buffer := vbo.buf
     offset: u32 = 0
     ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
+    c_buffer := cb
+    ctx->VSSetConstantBuffers(0, 1, cb)
 
     ctx->VSSetShader(vs.shader, nil, 0)
     ctx->RSSetViewports(1, &viewport) 
@@ -88,14 +118,6 @@ frame_end :: proc() {
     swapchain->Present(1, {})
 }
 
-
-VertexShader :: struct {
-    shader: ^d3d.IVertexShader,
-    layout: ^d3d.IInputLayout,
-}
-
-PixelShader :: ^d3d.IPixelShader
-
 @(private = "file")
 print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .Info, loc := #caller_location) {
     blob_str := strings.clone_from_ptr(
@@ -117,13 +139,15 @@ print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .I
     }
 }
 
-load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: typeid, loc := #caller_location) -> (VertexShader, bool) {
+// Entry point must be null terminated
+load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: typeid, loc := #caller_location) -> (vs: VertexShader, ok: bool) {
     context.logger = g.logger
 
     entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
     vs_blob:  ^d3d.IBlob
     err_blob: ^d3d.IBlob
-    ok := d3dc.Compile(
+
+    err := d3dc.Compile(
         raw_data(code), 
         len(code), nil, nil, nil, 
         entry_point_cstr, 
@@ -131,20 +155,20 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
         &vs_blob, 
         &err_blob
     )
-    if ok != 0 {
+    if err != 0 {
         print_shader_compilation_message(err_blob, .Error, loc = loc)
-        return {}, false
+        return
     }
     assert(vs_blob != nil)
 
     vert_shader: ^d3d.IVertexShader
-    ok = g.graphics.device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nil, &vert_shader)
-    gfx_check(ok)
+    err = g.graphics.device->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(), nil, &vert_shader)
+    gfx_check(err)
     assert(vert_shader != nil)
     
     input_element_desc := get_vb_layout(vertex_type)
     input_layout: ^d3d.IInputLayout
-    ok = g.graphics.device->CreateInputLayout(
+    err = g.graphics.device->CreateInputLayout(
         &input_element_desc[0], 
         u32(len(input_element_desc)), 
         vs_blob->GetBufferPointer(),
@@ -152,7 +176,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
         &input_layout
     )
 
-    if ok != 0 {
+    if err != 0 {
         err_builder := strings.builder_make(context.temp_allocator)
         strings.write_string(&err_builder, "Error creating input layout:\n")
         strings.write_string(&err_builder, "Make sure shader semantics match the names of the vertex struct:\n")
@@ -166,10 +190,10 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
         }
         strings.pop_rune(&err_builder)
         log.error(strings.to_string(err_builder), location = loc)
-            return {}, false
+            return
     }
     assert(input_layout != nil)
-    return VertexShader {
+    return {
         vert_shader,
         input_layout
     }, true
@@ -285,16 +309,17 @@ destroy_graphics :: proc(loc := #caller_location) {
 import "core:fmt"
 
 @(private = "file")
-gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None",loc := #caller_location) {
+gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None", loc := #caller_location) {
     when !ODIN_DEBUG {
         ensure(hresult == 0, loc = loc)
     } else {
         if hresult != 0 {
             if _, ok := fmt.enum_value_to_string(DXGIError(hresult)); !ok {
-                log.errorf("Generic Error: %v", error, location = loc)
+                log.errorf("Generic Error 0x%x: %v", u32(hresult), error, location = loc)
             } else {
                 log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
             }
+            info_manager_log(loc = loc)
             runtime.trap()
         }
     }

@@ -65,6 +65,7 @@ MouseEventType :: enum {
     // e.g. move wheel up -> event.mouse == {120, 0}
     // 120 is the wheel delta defined by Windows. 
     MWheel,
+    Move
 }
 
 Quit :: distinct i32
@@ -96,7 +97,6 @@ get_dt :: proc() -> time.Duration {
 create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window {
     if debug && g.window_count == 0 do g.logger = log.create_console_logger()
     context.logger = g.logger
-
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
         log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
@@ -107,13 +107,14 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     window.size = {width, height}
     window.name = name
     init_windows_window(window)
+    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle)
+
     if g.window_count == 0 {
         init_graphics(window, debug)
         g.elapsed = time.now()
         g.dt = time.now()
     }
 
-    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle)
     g.window_count += 1
     return window
 }
@@ -144,11 +145,16 @@ destroy_window :: proc (w: ^Window, loc := #caller_location){
     // If a window was destroyed the window count can be decremented
     context.logger = g.logger
     destroy_window_raw(w.handle, loc)
-    if g.window_count == 0 {
-        destroy_graphics(loc)
-    }
+
     unregister_window_class(w, loc)
     free(w)
+
+    // Last window deleated -> Should de-init
+    if g.window_count == 0 {
+        que.destroy(&g.event_queue)
+        destroy_graphics(loc)
+        log.destroy_console_logger(g.logger)
+    }
 }
 
 get_window_size :: proc(w: ^Window) -> [2]i32 {
