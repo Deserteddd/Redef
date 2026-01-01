@@ -117,6 +117,7 @@ WndProc :: proc "stdcall" (
             x := win.GET_X_LPARAM(lparam)
             y := win.GET_Y_LPARAM(lparam)
             g.mouse_position = {x, y}
+            
 
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -144,14 +145,16 @@ create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
 create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wparam: win.WPARAM = uintptr(0)) {
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
-    g.mouse_position = {x, y}
     if event_type == .MWheel {
         x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam))
         y = 0
+    } else {
+        g.mouse_position = {x, y}
     }
     mod: ModKeys
     mod += g.kb_state[.CONTROL] ? {.CONTROL} : {}
-    mod += g.kb_state[.SHIFT] ? {.SHIFT} : {} 
+    mod += g.kb_state[.SHIFT] ? {.SHIFT} : {}
+
     add_event(MouseEvent {
         type = event_type,
         position = {x, y},
