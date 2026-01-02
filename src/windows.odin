@@ -8,8 +8,6 @@ import que "core:container/queue"
 /* TODO: 
 []  Make multiple windows work in a way where each window has it's own event queue
     and they can be polled independently. Graphics subsystem only supports one window for now.
-
-[]  Fix windows loading cursor on startup   
 */
 
 
@@ -90,7 +88,8 @@ WndProc :: proc "stdcall" (
         case win.WM_DESTROY:       win.PostQuitMessage(auto_cast wparam)
         
         // -- Keyboard events --
-        case win.WM_KEYDOWN:     create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
+        case win.WM_KEYDOWN:
+            if wparam < 254 do create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
         case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
         case win.WM_CHAR:        
             // We don't want random text input when typing with control down
@@ -117,14 +116,14 @@ WndProc :: proc "stdcall" (
             x := win.GET_X_LPARAM(lparam)
             y := win.GET_Y_LPARAM(lparam)
             g.mouse_position = {x, y}
-            
-
+        case win.WM_SETCURSOR: win.SetCursor(win.LoadCursorA(nil, win.IDC_ARROW));
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 @(private = "file")
 create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
+    if wparam > 254 do return
     keycode := Keycode(wparam)
     mod: ModKeys
     mod += g.kb_state[.CONTROL] ? {.CONTROL} : {}

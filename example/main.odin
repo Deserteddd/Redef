@@ -5,15 +5,15 @@ import "base:runtime"
 import "core:math/linalg"
 import rd "../src"
 
-SCREENW :: 640
-SCREENH :: 480
+SCREENW :: 840
+SCREENH :: 580
 
 BACKROUND :: [4]f32 {0.2, 0.2, 0.2, 1.0}
 
 shaders_hlsl := #load("shaders/shaders.hlsl")
 
 main :: proc() {
-    // Create a window. ODIN_DEBUG is true when compiled with -debug
+    // Create a window. Debug mode is on true when compiled with -debug
     window := rd.create_window("Big pp window", SCREENW, SCREENH, ODIN_DEBUG); assert(window != nil)
 
     // Make sure window gets destroyed
@@ -76,9 +76,9 @@ main :: proc() {
         ubo := [2]matrix[4,4]f32 {vp, {}}
 
         // First cube
-        r := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/5, {1, 1, 0})
+        r := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/3, {1, 1, 0})
         ubo.y = linalg.matrix4_from_trs_f32(
-            t = {0, 0, -3}, 
+            t = {1.5, 0, -3}, 
             r = r,
             s = 1
         )
@@ -86,11 +86,11 @@ main :: proc() {
         rd.draw_indexed(vs, ps, vbo, ibo, &cb)
 
         // Second cube
-        r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/5, {-1, -1, 0})
+        r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/4, {-1, -1, 0})
         ubo.y = linalg.matrix4_from_trs_f32(
-            t = {0, 0, -10}, 
-            r = -r,
-            s = 4
+            t = {-1.5, 0, -3}, 
+            r = r,
+            s = 1
         )
         cb = rd.create_constant_buffer(&ubo)
         rd.draw_indexed(vs, ps, vbo, ibo, &cb)
