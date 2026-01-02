@@ -17,7 +17,7 @@ Global :: struct {
     graphics:       Graphics,
     dt:             time.Time,
     elapsed:        time.Time,
-    logger:         log.Logger
+    logger:         log.Logger,
 }
 
 @(private = "package")

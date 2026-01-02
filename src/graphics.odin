@@ -4,7 +4,7 @@ import "core:log"
 import "core:strings"
 import "base:runtime"
 import "core:reflect"
-import dx "core:math/linalg/hlsl"
+import "core:fmt"
 import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
@@ -16,7 +16,7 @@ Graphics :: struct {
     swapchain:      ^dxgi.ISwapChain,
     ctx:            ^d3d.IDeviceContext,
     target:         ^d3d.IRenderTargetView,
-    viewport:       d3d.VIEWPORT,
+    dsv:            ^d3d.IDepthStencilView,
     info_manager:   DXGIInfoManager,
 }
 
@@ -34,6 +34,11 @@ VertexBuffer :: struct {
 }
 
 CBuffer :: ^d3d.IBuffer
+
+IndexBuffer :: struct {
+    buf: ^d3d.IBuffer,
+    len: u32,
+}
 
 create_constant_buffer :: proc(data: ^$T) -> CBuffer { 
     context.logger = g.logger
@@ -54,11 +59,38 @@ create_constant_buffer :: proc(data: ^$T) -> CBuffer {
     gfx_check(err, "Constant buffer creation failed")
     info_manager_log()
     return cb
-} 
+}
 
-create_vertex_buffer :: proc(vertices: ^[]$T) -> VertexBuffer {
+create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
     context.logger = g.logger
-    ensure(vertices^ != nil)
+    ensure(indices != nil)
+
+    len_bytes := u32(len(indices) * size_of(u16))
+    ibo_desc := d3d.BUFFER_DESC{
+		BindFlags = {.INDEX_BUFFER},
+		Usage     = .DEFAULT,
+		ByteWidth = len_bytes,
+        StructureByteStride = size_of(u16),
+	}
+
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = raw_data(indices)
+    }
+
+    ibo: ^d3d.IBuffer
+
+    info_manager_set()
+    ok := g.graphics.device->CreateBuffer(&ibo_desc, &sd, &ibo)
+    gfx_check(ok, "Index buffer creation failed")
+    return IndexBuffer {
+        buf = ibo,
+        len = u32(len(indices))
+    }
+}
+
+create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
+    context.logger = g.logger
+    ensure(vertices != nil)
     len_bytes := u32(len(vertices) * size_of(T))
 	vbo_desc := d3d.BUFFER_DESC{
 		BindFlags = {.VERTEX_BUFFER},
@@ -68,7 +100,7 @@ create_vertex_buffer :: proc(vertices: ^[]$T) -> VertexBuffer {
 	}
 
     sd := d3d.SUBRESOURCE_DATA {
-        pSysMem = raw_data(vertices^)
+        pSysMem = raw_data(vertices)
     }
 
     vbo: ^d3d.IBuffer
@@ -93,50 +125,56 @@ draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer, cb: ^CBuffer)
     buffer := vbo.buf
     offset: u32 = 0
     ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
-    c_buffer := cb
-    ctx->VSSetConstantBuffers(0, 1, cb)
+    if cb != nil {
+        c_buffer := cb
+        ctx->VSSetConstantBuffers(0, 1, cb)
+    }
 
     ctx->VSSetShader(vs.shader, nil, 0)
-    ctx->RSSetViewports(1, &viewport) 
     ctx->PSSetShader(ps, nil, 0)
 
-    ctx->OMSetRenderTargets(1, &target, nil)
 
     info_manager_set()
     ctx->Draw(vbo.num_vertices, 0)
     info_manager_log()
 }
 
+draw_indexed :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer, ibo: IndexBuffer, cb: ^CBuffer) {
+    context.logger = g.logger
+    using g.graphics
+
+    ctx->IASetPrimitiveTopology(.TRIANGLELIST)
+    ctx->IASetInputLayout(vs.layout)
+    stride := vbo.stride
+    buffer := vbo.buf
+    offset: u32 = 0
+    ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
+    ctx->IASetIndexBuffer(ibo.buf, .R16_UINT, 0)
+    if cb != nil {
+        c_buffer := cb
+        ctx->VSSetConstantBuffers(0, 1, cb)
+    }
+
+    ctx->VSSetShader(vs.shader, nil, 0)
+    ctx->PSSetShader(ps, nil, 0)
+
+
+    info_manager_set()
+    ctx->DrawIndexed(ibo.len, 0, 0)
+    info_manager_log()
+}
+
+
 clear_buffer :: proc(color: [4]f32) {
     using g.graphics
     color := color
     ctx->ClearRenderTargetView(target, &color)
+    ctx->ClearDepthStencilView(dsv, {.DEPTH}, 1, 0)
 }
 
 frame_end :: proc() {
     using g.graphics
     swapchain->Present(1, {})
-}
-
-@(private = "file")
-print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .Info, loc := #caller_location) {
-    blob_str := strings.clone_from_ptr(
-        cast(^u8)blob->GetBufferPointer(), 
-        int(blob->GetBufferSize()), 
-        context.temp_allocator
-    )
-    if blob_str == "" {
-        log.info("Empty", location = loc)
-    } else {
-        err_builder := strings.builder_make(context.temp_allocator)
-        strings.write_rune(&err_builder, '"')
-        for line in strings.split_lines_iterator(&blob_str) {
-            strings.write_string(&err_builder, line)
-        }
-        strings.pop_rune(&err_builder)
-        strings.write_rune(&err_builder, '"')
-        log.log(level, strings.to_string(err_builder), location = loc)
-    }
 }
 
 // Entry point must be null terminated
@@ -217,30 +255,6 @@ load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_loca
     return pixel_shader, true
 }
 
-get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator) -> []d3d.INPUT_ELEMENT_DESC {
-    element_info_from_type :: proc(type: ^runtime.Type_Info) -> dxgi.FORMAT {
-        switch type {
-            case type_info_of(vec2): return .R32G32_FLOAT
-            case type_info_of(vec3): return .R32G32B32_FLOAT
-            case type_info_of(vec4): return .R32G32B32A32_FLOAT
-            case type_info_of(u32):  return .R32_UINT
-            case: return .UNKNOWN
-        }
-    }
-    fields := reflect.struct_field_types(vertex_type)
-    names  := reflect.struct_field_names(vertex_type)
-    data := make([]d3d.INPUT_ELEMENT_DESC, len(fields) > 0 ? len(fields) : 1, context.temp_allocator)
-
-    for field, i in fields {
-        data[i].SemanticName = strings.unsafe_string_to_cstring(names[i])
-        data[i].AlignedByteOffset = i == 0 ? 0 : d3d.APPEND_ALIGNED_ELEMENT
-        data[i].Format = element_info_from_type(field)
-        data[i].InputSlotClass = .VERTEX_DATA
-    }
-    return data
-}
-
-
 @(private = "package")
 init_graphics :: proc(window: ^Window, debug: bool) {
 sd: dxgi.SWAP_CHAIN_DESC
@@ -279,14 +293,99 @@ sd: dxgi.SWAP_CHAIN_DESC
     backbuffer->Release()
 
     create_info_manager()
+    info_manager_set()
 
-    viewport = d3d.VIEWPORT{
+    viewport := d3d.VIEWPORT{
         0, 0,
         f32(window.size.x), f32(window.size.y),
         0, 1,
     }
+    
+    ctx->RSSetViewports(1, &viewport) 
+    info_manager_set()
+
+    ds_desc: d3d.DEPTH_STENCIL_DESC = {
+        DepthEnable    = true,
+        DepthWriteMask = .ALL,
+        DepthFunc      = .LESS
+    }
+
+    dss: ^d3d.IDepthStencilState
+    result = device->CreateDepthStencilState(&ds_desc, &dss)
+    gfx_check(result)
+    ctx->OMSetDepthStencilState(dss, 1)
+
+    depth_stencil_desc: d3d.TEXTURE2D_DESC = {
+        Width  = u32(window.size.x),
+        Height = u32(window.size.y),
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = .D32_FLOAT,
+        SampleDesc = {
+            Count = 1
+        },
+        Usage = .DEFAULT,
+        BindFlags = {.DEPTH_STENCIL}
+    }
+    depth_stencil: ^d3d.ITexture2D
+    result = device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
+    gfx_check(result)
+
+    dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
+        Format = .D32_FLOAT,
+        ViewDimension = .TEXTURE2D,
+    }
+    result = device->CreateDepthStencilView(depth_stencil, &dsv_desc, &dsv)
+    gfx_check(result)
+
+    ctx->OMSetRenderTargets(1, &target, dsv)
 
     log.info("Initialized graphics")
+}
+
+@(private = "file")
+get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator) -> []d3d.INPUT_ELEMENT_DESC {
+    element_info_from_type :: proc(type: ^runtime.Type_Info) -> dxgi.FORMAT {
+        switch type {
+            case type_info_of(vec2): return .R32G32_FLOAT
+            case type_info_of(vec3): return .R32G32B32_FLOAT
+            case type_info_of(vec4): return .R32G32B32A32_FLOAT
+            case type_info_of(u32):  return .R32_UINT
+            case: return .UNKNOWN
+        }
+    }
+    fields := reflect.struct_field_types(vertex_type)
+    names  := reflect.struct_field_names(vertex_type)
+    data := make([]d3d.INPUT_ELEMENT_DESC, len(fields) > 0 ? len(fields) : 1, context.temp_allocator)
+
+    for field, i in fields {
+        data[i].SemanticName = strings.unsafe_string_to_cstring(names[i])
+        data[i].AlignedByteOffset = i == 0 ? 0 : d3d.APPEND_ALIGNED_ELEMENT
+        data[i].Format = element_info_from_type(field)
+        data[i].InputSlotClass = .VERTEX_DATA
+    }
+    return data
+}
+
+@(private = "file")
+print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .Info, loc := #caller_location) {
+    blob_str := strings.clone_from_ptr(
+        cast(^u8)blob->GetBufferPointer(), 
+        int(blob->GetBufferSize()), 
+        context.temp_allocator
+    )
+    if blob_str == "" {
+        log.info("Empty", location = loc)
+    } else {
+        err_builder := strings.builder_make(context.temp_allocator)
+        strings.write_rune(&err_builder, '"')
+        for line in strings.split_lines_iterator(&blob_str) {
+            strings.write_string(&err_builder, line)
+        }
+        strings.pop_rune(&err_builder)
+        strings.write_rune(&err_builder, '"')
+        log.log(level, strings.to_string(err_builder), location = loc)
+    }
 }
 
 @(private = "package")
@@ -305,8 +404,6 @@ destroy_graphics :: proc(loc := #caller_location) {
 
     log.info("Destroyed graphics subsystem", location = loc)
 }
-
-import "core:fmt"
 
 @(private = "file")
 gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None", loc := #caller_location) {

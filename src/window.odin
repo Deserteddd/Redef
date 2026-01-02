@@ -165,6 +165,6 @@ get_window_name :: proc(w: ^Window) -> string {
     return w.name
 }
 
-get_mouse_position :: proc() -> [2]i32 {
-    return g.mouse_position
+get_mouse_position :: proc() -> (x: f32, y: f32) {
+    return f32(g.mouse_position.x), f32(g.mouse_position.y)
 }
