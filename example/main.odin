@@ -31,17 +31,19 @@ main :: proc() {
 
     // Load a mesh
     cube: Mesh
-    cube, ok = load_mesh("example/cube.obj"); assert(ok)
+    cube, ok    = load_mesh("example/cube.obj");    assert(ok)
 
-    // Create vertex and index buffer from it
-    vertex_buffer := rd.create_vertex_buffer(cube.vertices)
-    index_buffer  := rd.create_index_buffer(cube.indices)
+    // Create vertex and index buffers for it
+    cube_vbo := rd.create_vertex_buffer(cube.vertices)
+    cube_ibo := rd.create_index_buffer(cube.indices)
 
-    // Bind resources
-    ok = rd.bind(&vertex_buffer); assert(ok)
-    ok = rd.bind(&index_buffer);  assert(ok)
+    // Bind shaders
     ok = rd.bind(&vertex_shader); assert(ok)
     ok = rd.bind(&pixel_shader);  assert(ok)
+    
+    // Bind buffers
+    ok = rd.bind(&cube_vbo); assert(ok)
+    ok = rd.bind(&cube_ibo); assert(ok)
 
     // Create a view-projection matrix
     proj := create_proj_matrix()
@@ -50,7 +52,7 @@ main :: proc() {
     rd.push_constant_data(.Vertex, &vp, 0)
 
     // Create colors to be used in pixel shader
-    colors: [6]vec4 = {
+    cube_colors: [6]vec4 = {
         {1, 0, 0, 1},
         {0, 1, 0, 1},
         {0, 0, 1, 1},
@@ -58,8 +60,7 @@ main :: proc() {
         {1, 0, 1, 1},
         {0, 1, 1, 1}
     }
-
-    rd.push_constant_data(.Pixel, &colors, 0)
+    rd.push_constant_data(.Pixel, &cube_colors, 0)
 
     // Set variables
     running := true
@@ -94,14 +95,14 @@ main :: proc() {
         // Clear the screen
         rd.clear(BACKROUND)
 
-        // First cube
+        // Render cube
         model_matrix := linalg.matrix4_from_trs_f32(
             t = {1.5, 0, -3}, 
             r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame)/2.25), {0.4, 0.9, -0.5}),
             s = 1
         )
         rd.push_constant_data(.Vertex, &model_matrix, 1)
-        rd.draw_indexed(index_buffer.length)
+        rd.draw_indexed(cube_ibo.length)
 
         // Second cube
         model_matrix = linalg.matrix4_from_trs_f32(
@@ -110,7 +111,7 @@ main :: proc() {
             s = 1
         )
         rd.push_constant_data(.Vertex, &model_matrix, 1)
-        rd.draw_indexed(index_buffer.length)
+        rd.draw_indexed(cube_ibo.length)
 
         // Finish the frame
         rd.frame_end()

@@ -23,9 +23,9 @@ vs_out vs_main(vs_in input) {
 }
 
 cbuffer Palette {
-    float3 colors[6];
+    float4 colors[6];
 }
 
 float4 ps_main(uint tid : SV_PrimitiveID) : SV_Target {
-	return float4(colors[tid % 6], 1);
+	return colors[tid % 6];
 }

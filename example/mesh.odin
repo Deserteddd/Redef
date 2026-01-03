@@ -7,7 +7,7 @@ import "core:fmt"
 import "core:slice"
 
 Vertex :: struct {
-    pos: [3]f32,
+    pos: vec3,
 }
 
 Mesh :: struct {
