@@ -1,11 +1,9 @@
 
 struct vs_in {
 	float3 position : pos;
-    float4 color    : col;
 };
 struct vs_out {
 	float4 position : SV_Position;
-    float4 color    : col;
 };
 
 cbuffer Vp {
@@ -18,12 +16,16 @@ cbuffer Model {
 
 vs_out vs_main(vs_in input) {
     vs_out output;
-    
+
     float4 worldPosition = mul(model, float4(input.position, 1));
     output.position = mul(vp, worldPosition);
-    output.color = normalize(float4(input.position, 1));
 	return output;
 }
-float4 ps_main(vs_out input) : SV_Target {
-	return input.color;
+
+cbuffer Palette {
+    float3 colors[6];
+}
+
+float4 ps_main(uint tid : SV_PrimitiveID) : SV_Target {
+	return float4(colors[tid % 6], 1);
 }

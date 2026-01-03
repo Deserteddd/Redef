@@ -5,6 +5,7 @@ import "core:strings"
 import "base:runtime"
 import "core:reflect"
 import "core:fmt"
+import "core:slice"
 import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
@@ -18,6 +19,16 @@ Graphics :: struct {
     target:         ^d3d.IRenderTargetView,
     dsv:            ^d3d.IDepthStencilView,
     info_manager:   DXGIInfoManager,
+}
+
+Texture :: struct {
+    width, height: u32,
+    tex: ^d3d.ITexture2D
+}
+
+ShaderStage :: enum {
+    Vertex,
+    Pixel
 }
 
 VertexShader :: struct {
@@ -39,26 +50,62 @@ IndexBuffer :: struct {
     length: u32,
 }
 
-push_constant_data :: proc(data: ^$T, slot: u32) { 
+push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32) { 
     context.logger = g.logger
+    ensure(data != nil)
+
+    size: u32 = size_of(data^)
+    mod := size % 16
+
+    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size)
+    size = size + mod
+    if size < 96 do size = 96
     cb_desc := d3d.BUFFER_DESC{
 		BindFlags = {.CONSTANT_BUFFER},
 		Usage     = .DYNAMIC,
         CPUAccessFlags = {.WRITE},
-		ByteWidth = size_of(data^),
+		ByteWidth = u32(size)
 	}
 
     sd := d3d.SUBRESOURCE_DATA {
         pSysMem = data
     }
-
+    
     cb: ^d3d.IBuffer
     info_manager_set()
     err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
     gfx_check(err, "Constant buffer creation failed")
+
     info_manager_log()
-    g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
+    switch stage {
+        case .Vertex: g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
+        case .Pixel: g.graphics.ctx->PSSetConstantBuffers(slot, 1, &cb)
+    }
+    rc := cb->Release()
+    assert(rc == 0)
     info_manager_log()
+}
+
+load_texture :: proc(pixels: []byte, width, height: u32) -> Texture {
+    ensure(pixels != nil)
+    desc: d3d.TEXTURE2D_DESC = {
+        Width  = width,
+        Height = height,
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = .R8G8B8A8_UINT,
+        SampleDesc = {
+            Count = 1
+        },
+        Usage = .DEFAULT,
+        BindFlags = {.DEPTH_STENCIL}
+    }
+    tex: ^d3d.ITexture2D
+    result := g.graphics.device->CreateTexture2D(&desc, nil, &tex)
+
+    return Texture {
+        width, height, tex
+    }
 }
 
 create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
@@ -139,6 +186,10 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
         case typeid_of(PixelShader):
             ps := cast(^PixelShader)resource
             g.graphics.ctx->PSSetShader(ps^, nil, 0)
+        
+        case typeid_of(Texture):
+            log.debug("Binding texture")
+            tex := cast(^PixelShader)resource
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
@@ -442,7 +493,7 @@ info_manager_log :: proc(loc := #caller_location) {
         ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, message, &message_length)
         gfx_check(ok)
         message_string := strings.string_from_null_terminated_ptr(message.pDescription, int(message_length))
-        log.errorf("D3D11 Error: \"%v\"", message_string, location = loc)
+        log.errorf("%v", message_string, location = loc)
     }
 }
 

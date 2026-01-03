@@ -8,7 +8,6 @@ import "core:slice"
 
 Vertex :: struct {
     pos: [3]f32,
-    col: [4]f32,
 }
 
 Mesh :: struct {
@@ -17,6 +16,7 @@ Mesh :: struct {
 }
 
 vec3 :: [3]f32
+vec4 :: [4]f32
 
 load_mesh :: proc(path: string, allocator := context.allocator) -> (mesh: Mesh, ok: bool) {
     fmt.println("Loading:", path)
@@ -37,7 +37,6 @@ load_mesh :: proc(path: string, allocator := context.allocator) -> (mesh: Mesh, 
             case "v ":
                 append(&vertices, Vertex {
                     pos = parse_vec3(line, 2),
-                    col = {1, 0, 0, 0}
                 })
             case "f ":
                 line_ptr := line

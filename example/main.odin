@@ -47,7 +47,19 @@ main :: proc() {
     proj := create_proj_matrix()
     view := create_view_matrix(0, 0, 0)
     vp := proj * view
-    rd.push_constant_data(&vp, 0)
+    rd.push_constant_data(.Vertex, &vp, 0)
+
+    // Create colors to be used in pixel shader
+    colors: [6]vec4 = {
+        {1, 0, 0, 1},
+        {0, 1, 0, 1},
+        {0, 0, 1, 1},
+        {1, 1, 0, 1},
+        {1, 0, 1, 1},
+        {0, 1, 1, 1}
+    }
+
+    rd.push_constant_data(.Pixel, &colors, 0)
 
     // Set variables
     running := true
@@ -85,19 +97,19 @@ main :: proc() {
         // First cube
         model_matrix := linalg.matrix4_from_trs_f32(
             t = {1.5, 0, -3}, 
-            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/3, {1, 1, 0}),
+            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame)/2.25), {0.4, 0.9, -0.5}),
             s = 1
         )
-        rd.push_constant_data(&model_matrix, 1)
+        rd.push_constant_data(.Vertex, &model_matrix, 1)
         rd.draw_indexed(index_buffer.length)
 
         // Second cube
         model_matrix = linalg.matrix4_from_trs_f32(
             t = {-1.5, 0, -3}, 
-            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/4, {-1, -1, 0}),
+            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame)/3), {-0.5, -0.2, 0.5}),
             s = 1
         )
-        rd.push_constant_data(&model_matrix, 1)
+        rd.push_constant_data(.Vertex, &model_matrix, 1)
         rd.draw_indexed(index_buffer.length)
 
         // Finish the frame
