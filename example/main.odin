@@ -10,46 +10,59 @@ SCREENH :: 580
 
 BACKROUND :: [4]f32 {0.2, 0.2, 0.2, 1.0}
 
-shaders_hlsl := #load("shaders/shaders.hlsl")
+shader_src := #load("shaders/shaders.hlsl")
 
 main :: proc() {
-    // Create a window. Debug mode is on true when compiled with -debug
+    // Create a window. Debug mode is enabled when compiled with -debug
     window := rd.create_window("Big pp window", SCREENW, SCREENH, ODIN_DEBUG); assert(window != nil)
 
     // Make sure window gets destroyed
     defer rd.destroy_window(window)
 
-    // Create Vertex shader
+    // Create vertex shader
+    // load_vertex_shader() takes as input the Vertex struct which must match the vertex input structure in your shader
     ok: bool
-    vs: rd.VertexShader
-    vs, ok = rd.load_vertex_shader(shaders_hlsl, "vs_main", Vertex); assert(ok)
+    vertex_shader: rd.VertexShader
+    vertex_shader, ok = rd.load_vertex_shader(shader_src, "vs_main", Vertex); assert(ok)
 
-    // Create a pixel shader
-    ps: rd.PixelShader
-    ps, ok = rd.load_pixel_shader(shaders_hlsl, "ps_main"); assert(ok)
+    // Create pixel shader
+    pixel_shader: rd.PixelShader
+    pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_main"); assert(ok)
 
     // Load a mesh
     cube: Mesh
     cube, ok = load_mesh("example/cube.obj"); assert(ok)
 
-    // Create vertex buffer from it
-    vbo := rd.create_vertex_buffer(cube.vertices)
-    ibo := rd.create_index_buffer(cube.indices)
+    // Create vertex and index buffer from it
+    vertex_buffer := rd.create_vertex_buffer(cube.vertices)
+    index_buffer  := rd.create_index_buffer(cube.indices)
 
-    // Main loop setup
+    // Bind resources
+    ok = rd.bind(&vertex_buffer); assert(ok)
+    ok = rd.bind(&index_buffer);  assert(ok)
+    ok = rd.bind(&vertex_shader); assert(ok)
+    ok = rd.bind(&pixel_shader);  assert(ok)
+
+    // Create a view-projection matrix
+    proj := create_proj_matrix()
+    view := create_view_matrix(0, 0, 0)
+    vp := proj * view
+    rd.push_constant_data(&vp, 0)
+
+    // Set variables
     running := true
     frame: u32
 
-    // Main loop
+    // ------ Main loop -------
     for running {
 
-        // Things to do before a new frame
+        // ------ End of Frame -------
         defer {
             free_all(context.temp_allocator)
             frame += 1
         }
 
-        // Get user input
+        // ------- User Input --------
         for event in rd.pump_event_iter(window) {
             #partial switch ev in event {
                 // Quit message from OS
@@ -65,36 +78,29 @@ main :: proc() {
             }
         }
 
+        // -------- Render ----------
         // Clear the screen
-        rd.clear_buffer(BACKROUND)
-
-
-        // Drawing
-        proj := create_proj_matrix()
-        view := create_view_matrix(0, 0, 0)
-        vp := proj * view
-        ubo := [2]matrix[4,4]f32 {vp, {}}
+        rd.clear(BACKROUND)
 
         // First cube
-        r := linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/3, {1, 1, 0})
-        ubo.y = linalg.matrix4_from_trs_f32(
+        model_matrix := linalg.matrix4_from_trs_f32(
             t = {1.5, 0, -3}, 
-            r = r,
+            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/3, {1, 1, 0}),
             s = 1
         )
-        cb := rd.create_constant_buffer(&ubo)
-        rd.draw_indexed(vs, ps, vbo, ibo, &cb)
+        rd.push_constant_data(&model_matrix, 1)
+        rd.draw_indexed(index_buffer.length)
 
         // Second cube
-        r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/4, {-1, -1, 0})
-        ubo.y = linalg.matrix4_from_trs_f32(
+        model_matrix = linalg.matrix4_from_trs_f32(
             t = {-1.5, 0, -3}, 
-            r = r,
+            r = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(frame))/4, {-1, -1, 0}),
             s = 1
         )
-        cb = rd.create_constant_buffer(&ubo)
-        rd.draw_indexed(vs, ps, vbo, ibo, &cb)
+        rd.push_constant_data(&model_matrix, 1)
+        rd.draw_indexed(index_buffer.length)
 
+        // Finish the frame
         rd.frame_end()
     }
 }

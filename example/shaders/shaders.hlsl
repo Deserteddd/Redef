@@ -8,10 +8,13 @@ struct vs_out {
     float4 color    : col;
 };
 
-cbuffer Mat {
+cbuffer Vp {
     float4x4 vp;
-    float4x4 model;
 };
+
+cbuffer Model {
+    float4x4 model;
+}
 
 vs_out vs_main(vs_in input) {
     vs_out output;

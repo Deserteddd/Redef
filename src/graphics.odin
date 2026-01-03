@@ -30,17 +30,16 @@ PixelShader :: ^d3d.IPixelShader
 VertexBuffer :: struct {
     buf: ^d3d.IBuffer,
     num_vertices: u32,
-    stride: u32
+    stride: u32,
+    offset: u32, // Not used
 }
-
-CBuffer :: ^d3d.IBuffer
 
 IndexBuffer :: struct {
     buf: ^d3d.IBuffer,
-    len: u32,
+    length: u32,
 }
 
-create_constant_buffer :: proc(data: ^$T) -> CBuffer { 
+push_constant_data :: proc(data: ^$T, slot: u32) { 
     context.logger = g.logger
     cb_desc := d3d.BUFFER_DESC{
 		BindFlags = {.CONSTANT_BUFFER},
@@ -58,7 +57,8 @@ create_constant_buffer :: proc(data: ^$T) -> CBuffer {
     err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
     gfx_check(err, "Constant buffer creation failed")
     info_manager_log()
-    return cb
+    g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
+    info_manager_log()
 }
 
 create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
@@ -84,7 +84,7 @@ create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
     gfx_check(ok, "Index buffer creation failed")
     return IndexBuffer {
         buf = ibo,
-        len = u32(len(indices))
+        length = u32(len(indices))
     }
 }
 
@@ -111,61 +111,60 @@ create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
     return VertexBuffer {
         vbo,
         u32(len(vertices)),
-        size_of(T)
+        size_of(T),
+        0
     }
 }
 
-draw :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer, cb: ^CBuffer) {
+bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
     context.logger = g.logger
-    using g.graphics
+    if resource == nil do return
+    ok = true
+    info_manager_set()
+    switch typeid_of(T) {
+        case typeid_of(VertexBuffer):
+            vbo := cast(^VertexBuffer)resource
+            g.graphics.ctx->IASetVertexBuffers(0, 1, &vbo.buf, &vbo.stride, &vbo.offset)
 
-    ctx->IASetPrimitiveTopology(.TRIANGLELIST)
-    ctx->IASetInputLayout(vs.layout)
-    stride := vbo.stride
-    buffer := vbo.buf
-    offset: u32 = 0
-    ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
-    if cb != nil {
-        c_buffer := cb
-        ctx->VSSetConstantBuffers(0, 1, cb)
+        case typeid_of(IndexBuffer):
+            ibo := cast(^IndexBuffer)resource
+            g.graphics.ctx->IASetIndexBuffer(ibo.buf, .R16_UINT, 0)
+
+        case typeid_of(VertexShader):
+            vs := cast(^VertexShader)resource
+            g.graphics.ctx->IASetPrimitiveTopology(.TRIANGLELIST)
+            g.graphics.ctx->IASetInputLayout(vs.layout)
+            g.graphics.ctx->VSSetShader(vs.shader, nil, 0)
+
+        case typeid_of(PixelShader):
+            ps := cast(^PixelShader)resource
+            g.graphics.ctx->PSSetShader(ps^, nil, 0)
+        
+        // Invalid binds
+        case typeid_of(d3d.IPixelShader):
+            log.errorf("Type: %v is not bindable", typeid_of(T), location = loc)
+            log.error("Pass pixel shader by reference: bind(&pixel_shader)", location = loc)
+            return false
+
+        case:
+            log.errorf("Type: %v is not bindable", typeid_of(T), location = loc)
+            return false
+
     }
+    info_manager_log()
+    return
+}
 
-    ctx->VSSetShader(vs.shader, nil, 0)
-    ctx->PSSetShader(ps, nil, 0)
-
+draw_indexed :: proc(indices: u32) {
+    context.logger = g.logger
 
     info_manager_set()
-    ctx->Draw(vbo.num_vertices, 0)
+    g.graphics.ctx->DrawIndexed(indices, 0, 0)
     info_manager_log()
 }
 
-draw_indexed :: proc(vs: VertexShader, ps: PixelShader, vbo: VertexBuffer, ibo: IndexBuffer, cb: ^CBuffer) {
-    context.logger = g.logger
-    using g.graphics
 
-    ctx->IASetPrimitiveTopology(.TRIANGLELIST)
-    ctx->IASetInputLayout(vs.layout)
-    stride := vbo.stride
-    buffer := vbo.buf
-    offset: u32 = 0
-    ctx->IASetVertexBuffers(0, 1, &buffer, &stride, &offset)
-    ctx->IASetIndexBuffer(ibo.buf, .R16_UINT, 0)
-    if cb != nil {
-        c_buffer := cb
-        ctx->VSSetConstantBuffers(0, 1, cb)
-    }
-
-    ctx->VSSetShader(vs.shader, nil, 0)
-    ctx->PSSetShader(ps, nil, 0)
-
-
-    info_manager_set()
-    ctx->DrawIndexed(ibo.len, 0, 0)
-    info_manager_log()
-}
-
-
-clear_buffer :: proc(color: [4]f32) {
+clear :: proc(color: [4]f32) {
     using g.graphics
     color := color
     ctx->ClearRenderTargetView(target, &color)
@@ -187,7 +186,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
 
     err := d3dc.Compile(
         raw_data(code), 
-        len(code), nil, nil, nil, 
+        len(code), nil, nil, nil,
         entry_point_cstr, 
         "vs_5_0", 0, 0, 
         &vs_blob, 
@@ -391,7 +390,6 @@ print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .I
 @(private = "package")
 destroy_graphics :: proc(loc := #caller_location) {
     using g.graphics
-    log.info("Destroying graphics subsystem", location = loc)
 
     assert(device != nil)
     assert(swapchain != nil)

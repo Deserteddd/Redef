@@ -8,7 +8,7 @@ import "core:slice"
 
 Vertex :: struct {
     pos: [3]f32,
-    col: [4]f32
+    col: [4]f32,
 }
 
 Mesh :: struct {

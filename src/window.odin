@@ -100,7 +100,7 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
         log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
-        return {}
+        return nil
     }
 
     window := new(Window)
@@ -113,6 +113,9 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
         init_graphics(window, debug)
         g.elapsed = time.now()
         g.dt = time.now()
+    } else {
+        log.errorf("Not Implemented: multiple windows")
+        return nil
     }
 
     g.window_count += 1
