@@ -58,6 +58,28 @@ unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
     if !ok do log_win_err()
 }
 
+@(private = "package")
+pump_event_iter_raw :: proc(window: ^Window) -> (event: Event, ok: bool) {
+    msg: win.MSG
+
+    for win.PeekMessageW(&msg, nil, 0, 0, win.PM_REMOVE){
+        if msg.message == win.WM_QUIT {
+            event = Quit(msg.wParam)
+            ok = true
+            return
+        }
+        win.TranslateMessage(&msg)
+        win.DispatchMessageW(&msg)
+    }
+
+    if que.len(g.event_queue) > 0 {
+        event = que.dequeue(&g.event_queue)
+            ok = true
+        return
+    }
+    return
+}
+
 // Returns false if window was already destroyed
 @(private = "package")
 destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {

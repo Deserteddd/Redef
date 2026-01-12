@@ -23,7 +23,8 @@ Graphics :: struct {
 
 Texture :: struct {
     width, height: u32,
-    tex: ^d3d.ITexture2D
+    tex: ^d3d.ITexture2D,
+    view: ^d3d.IShaderResourceView
 }
 
 ShaderStage :: enum {
@@ -50,61 +51,47 @@ IndexBuffer :: struct {
     length: u32,
 }
 
-push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32) { 
-    context.logger = g.logger
-    ensure(data != nil)
 
-    size: u32 = size_of(data^)
-    mod := size % 16
 
-    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size)
-    size = size + mod
-    if size < 96 do size = 96
-    cb_desc := d3d.BUFFER_DESC{
-		BindFlags = {.CONSTANT_BUFFER},
-		Usage     = .DYNAMIC,
-        CPUAccessFlags = {.WRITE},
-		ByteWidth = u32(size)
-	}
-
-    sd := d3d.SUBRESOURCE_DATA {
-        pSysMem = data
-    }
-    
-    cb: ^d3d.IBuffer
-    info_manager_set()
-    err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
-    gfx_check(err, "Constant buffer creation failed")
-
-    info_manager_log()
-    switch stage {
-        case .Vertex: g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
-        case .Pixel: g.graphics.ctx->PSSetConstantBuffers(slot, 1, &cb)
-    }
-    rc := cb->Release()
-    assert(rc == 0)
-    info_manager_log()
-}
-
+// Assumes Texture format 
 load_texture :: proc(pixels: []byte, width, height: u32) -> Texture {
+    context.logger = g.logger
+    log.debugf("Loading texture: [%v, %v]", width, height)
     ensure(pixels != nil)
-    desc: d3d.TEXTURE2D_DESC = {
+    tex_desc: d3d.TEXTURE2D_DESC = {
         Width  = width,
         Height = height,
         MipLevels = 1,
         ArraySize = 1,
-        Format = .R8G8B8A8_UINT,
+        Format = .R8G8B8A8_UNORM,
         SampleDesc = {
             Count = 1
         },
         Usage = .DEFAULT,
-        BindFlags = {.DEPTH_STENCIL}
+        BindFlags = {.SHADER_RESOURCE}
+    }
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = raw_data(pixels),
+        SysMemPitch = width*size_of(byte)*4
     }
     tex: ^d3d.ITexture2D
-    result := g.graphics.device->CreateTexture2D(&desc, nil, &tex)
+    result := g.graphics.device->CreateTexture2D(&tex_desc, &sd, &tex)
+    gfx_check(result)
+
+    view_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
+        Format = tex_desc.Format,
+        ViewDimension = d3d.SRV_DIMENSION.TEXTURE2D,
+        Texture2D = {
+            MipLevels = 1
+        },
+    }
+
+    view: ^d3d.IShaderResourceView
+    g.graphics.device->CreateShaderResourceView(tex, &view_desc, &view)
+    gfx_check(result)
 
     return Texture {
-        width, height, tex
+        width, height, tex, view
     }
 }
 
@@ -163,6 +150,15 @@ create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
     }
 }
 
+/*
+Binds a generic resource to the active pipeline
+    currently supported resource types:
+        VertexBuffer,
+        IndexBuffer,
+        VertexShader,
+        PixelShader,
+        Texture
+*/
 bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
     context.logger = g.logger
     if resource == nil do return
@@ -189,21 +185,58 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
         
         case typeid_of(Texture):
             log.debug("Binding texture")
-            tex := cast(^PixelShader)resource
+            tex := cast(^Texture)resource
+            g.graphics.ctx->PSSetShaderResources(0, 1, &tex.view)
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
             log.errorf("Type: %v is not bindable", typeid_of(T), location = loc)
             log.error("Pass pixel shader by reference: bind(&pixel_shader)", location = loc)
-            return false
+            ok = false
 
         case:
             log.errorf("Type: %v is not bindable", typeid_of(T), location = loc)
-            return false
+            ok = false
 
     }
     info_manager_log()
     return
+}
+
+push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32) { 
+    context.logger = g.logger
+    ensure(data != nil)
+
+    size: u32 = size_of(data^)
+    mod := size % 16
+
+    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size)
+    size = size + mod
+    if size < 96 do size = 96
+    cb_desc := d3d.BUFFER_DESC{
+		BindFlags = {.CONSTANT_BUFFER},
+		Usage     = .DYNAMIC,
+        CPUAccessFlags = {.WRITE},
+		ByteWidth = u32(size)
+	}
+
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = data
+    }
+    
+    cb: ^d3d.IBuffer
+    info_manager_set()
+    err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
+    gfx_check(err, "Constant buffer creation failed")
+
+    info_manager_log()
+    switch stage {
+        case .Vertex: g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
+        case .Pixel: g.graphics.ctx->PSSetConstantBuffers(slot, 1, &cb)
+    }
+    rc := cb->Release()
+    assert(rc == 0)
+    info_manager_log()
 }
 
 draw_indexed :: proc(indices: u32) {
@@ -319,7 +352,7 @@ sd: dxgi.SWAP_CHAIN_DESC
         SwapEffect = .DISCARD
     }
 
-    using g.graphics
+    using g
     // Initilaize graphics
     creation_flags: d3d.CREATE_DEVICE_FLAGS = debug ? {.DEBUG} : {}
 
@@ -329,30 +362,29 @@ sd: dxgi.SWAP_CHAIN_DESC
         nil, creation_flags, nil, 0,
         d3d.SDK_VERSION,
         &sd,
-        &swapchain,
-        &device,
+        &graphics.swapchain,
+        &graphics.device,
         nil,
-        &ctx
+        &graphics.ctx
     ); gfx_check(result)
 
     backbuffer: ^d3d.IResource
-    result = swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
+    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
     gfx_check(result)
-    result = device->CreateRenderTargetView(backbuffer, nil, &target)
+    result = graphics.device->CreateRenderTargetView(backbuffer, nil, &graphics.target)
     gfx_check(result)
     backbuffer->Release()
 
     create_info_manager()
-    info_manager_set()
 
+    info_manager_set()
     viewport := d3d.VIEWPORT{
         0, 0,
         f32(window.size.x), f32(window.size.y),
         0, 1,
     }
     
-    ctx->RSSetViewports(1, &viewport) 
-    info_manager_set()
+    graphics.ctx->RSSetViewports(1, &viewport) 
 
     ds_desc: d3d.DEPTH_STENCIL_DESC = {
         DepthEnable    = true,
@@ -361,9 +393,9 @@ sd: dxgi.SWAP_CHAIN_DESC
     }
 
     dss: ^d3d.IDepthStencilState
-    result = device->CreateDepthStencilState(&ds_desc, &dss)
+    result = graphics.device->CreateDepthStencilState(&ds_desc, &dss)
     gfx_check(result)
-    ctx->OMSetDepthStencilState(dss, 1)
+    graphics.ctx->OMSetDepthStencilState(dss, 1)
 
     depth_stencil_desc: d3d.TEXTURE2D_DESC = {
         Width  = u32(window.size.x),
@@ -378,23 +410,25 @@ sd: dxgi.SWAP_CHAIN_DESC
         BindFlags = {.DEPTH_STENCIL}
     }
     depth_stencil: ^d3d.ITexture2D
-    result = device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
+    result = graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
     gfx_check(result)
 
     dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
         Format = .D32_FLOAT,
         ViewDimension = .TEXTURE2D,
     }
-    result = device->CreateDepthStencilView(depth_stencil, &dsv_desc, &dsv)
+    result = graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &graphics.dsv)
     gfx_check(result)
 
-    ctx->OMSetRenderTargets(1, &target, dsv)
+    graphics.ctx->OMSetRenderTargets(1, &graphics.target, graphics.dsv)
+    info_manager_log()
 
     log.info("Initialized graphics")
 }
 
 @(private = "file")
 get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator) -> []d3d.INPUT_ELEMENT_DESC {
+    log.infof("Creating layout for: %v", type_info_of(vertex_type))
     element_info_from_type :: proc(type: ^runtime.Type_Info) -> dxgi.FORMAT {
         switch type {
             case type_info_of(vec2): return .R32G32_FLOAT
@@ -413,6 +447,7 @@ get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator)
         data[i].AlignedByteOffset = i == 0 ? 0 : d3d.APPEND_ALIGNED_ELEMENT
         data[i].Format = element_info_from_type(field)
         data[i].InputSlotClass = .VERTEX_DATA
+        log.infof("%v -> %v", field, data[i].Format)
     }
     return data
 }

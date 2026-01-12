@@ -6,10 +6,6 @@ import "core:time"
 import que "core:container/queue"
 
 // Todo: Remove Windows import
-import win "core:sys/windows"
-
-EventQueue :: que.Queue(Event)
-
 KeyboardState :: #sparse[Keycode]bool
 
 WindowHandle :: distinct rawptr
@@ -26,7 +22,6 @@ KeyboardEventType :: enum {
     KeyUp,
     Repeat,
 }
-
 
 ModKey :: enum u8 {
     CONTROL = u8(Keycode.CONTROL),
@@ -78,11 +73,7 @@ Event :: union {
 }
 
 
-@(private = "package")
-add_event :: proc(event: Event, loc := #caller_location) { 
-    ok, err := que.enqueue(&g.event_queue, event)
-    if !ok do log.errorf("Error: %v", err, location = loc)
-}
+
 
 time_since_start :: proc() -> time.Duration {
     return time.since(g.elapsed)
@@ -123,25 +114,9 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
 }
 
 
-pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool = true) {
+pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool) {
     context.logger = g.logger
-    msg: win.MSG
-
-    for win.PeekMessageW(&msg, nil, 0, 0, win.PM_REMOVE){
-        if msg.message == win.WM_QUIT {
-            event = Quit(msg.wParam)
-            return
-        }
-        win.TranslateMessage(&msg)
-        win.DispatchMessageW(&msg)
-    }
-
-    if que.len(g.event_queue) > 0 {
-        event = que.dequeue(&g.event_queue)
-        return
-    }
-    ok = false
-    return
+    return pump_event_iter_raw(window)
 }
 
 destroy_window :: proc (w: ^Window, loc := #caller_location){

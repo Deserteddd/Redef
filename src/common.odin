@@ -2,11 +2,14 @@ package redef
 import "core:time"
 import "core:log"
 import win "core:sys/windows"
+import que "core:container/queue"
 
 vec2 :: [2]f32
 vec3 :: [3]f32
 vec4 :: [4]f32
 mat4 :: matrix[4,4]f32
+
+EventQueue :: que.Queue(Event)
 
 @(private = "package")
 Global :: struct {
@@ -22,6 +25,12 @@ Global :: struct {
 
 @(private = "package")
 g: Global
+
+@(private = "package")
+add_event :: proc(event: Event, loc := #caller_location) { 
+    ok, err := que.enqueue(&g.event_queue, event)
+    if !ok do log.errorf("Error: %v", err, location = loc)
+}
 
 @(private = "package")
 string_to_cstring16 :: proc(s: string, allocator := context.temp_allocator) -> cstring16 {

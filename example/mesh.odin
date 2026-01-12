@@ -8,6 +8,7 @@ import "core:slice"
 
 Vertex :: struct {
     pos: vec3,
+    col: vec3
 }
 
 Mesh :: struct {
