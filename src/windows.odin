@@ -19,6 +19,7 @@ WindowClass :: win.WNDCLASSEXW
 
 @(private = "package")
 init_windows_window :: proc(window: ^Window) -> bool {
+    context.logger = g.logger
     name_16 := string_to_cstring16(window.name)
     wc, ok := create_window_class(name_16)
     if !ok do return false

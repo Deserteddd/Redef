@@ -5,7 +5,6 @@ import "core:strings"
 import "base:runtime"
 import "core:reflect"
 import "core:fmt"
-import "core:slice"
 import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
@@ -18,13 +17,16 @@ Graphics :: struct {
     ctx:            ^d3d.IDeviceContext,
     target:         ^d3d.IRenderTargetView,
     dsv:            ^d3d.IDepthStencilView,
+    rasterizer:     ^d3d.IRasterizerState,
     info_manager:   DXGIInfoManager,
 }
 
 Texture :: struct {
-    width, height: u32,
-    tex: ^d3d.ITexture2D,
-    view: ^d3d.IShaderResourceView
+    width:      u32,
+    height:     u32,
+    tex:        ^d3d.ITexture2D,
+    view:       ^d3d.IShaderResourceView,
+    sampler:    ^d3d.ISamplerState,
 }
 
 ShaderStage :: enum {
@@ -87,11 +89,20 @@ load_texture :: proc(pixels: []byte, width, height: u32) -> Texture {
     }
 
     view: ^d3d.IShaderResourceView
-    g.graphics.device->CreateShaderResourceView(tex, &view_desc, &view)
+    result = g.graphics.device->CreateShaderResourceView(tex, &view_desc, &view)
     gfx_check(result)
 
+    sampler_desc: d3d.SAMPLER_DESC = {
+        Filter   = .MIN_MAG_MIP_LINEAR,
+        AddressU = .WRAP,
+        AddressV = .WRAP,
+        AddressW = .WRAP,
+    }
+    sampler: ^d3d.ISamplerState
+    result = g.graphics.device->CreateSamplerState(&sampler_desc, &sampler)
+    gfx_check(result)
     return Texture {
-        width, height, tex, view
+        width, height, tex, view, sampler
     }
 }
 
@@ -182,11 +193,12 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
         case typeid_of(PixelShader):
             ps := cast(^PixelShader)resource
             g.graphics.ctx->PSSetShader(ps^, nil, 0)
-        
+       
         case typeid_of(Texture):
-            log.debug("Binding texture")
             tex := cast(^Texture)resource
             g.graphics.ctx->PSSetShaderResources(0, 1, &tex.view)
+            info_manager_log()
+            g.graphics.ctx->PSSetSamplers(0, 1, &tex.sampler)
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
@@ -300,7 +312,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
     if err != 0 {
         err_builder := strings.builder_make(context.temp_allocator)
         strings.write_string(&err_builder, "Error creating input layout:\n")
-        strings.write_string(&err_builder, "Make sure shader semantics match the names of the vertex struct:\n")
+        strings.write_string(&err_builder, "Make sure shader semantic names match the names of the vertex struct:\n")
         input_names := reflect.struct_field_names(vertex_type)
         
         for name in input_names {
@@ -422,6 +434,16 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     graphics.ctx->OMSetRenderTargets(1, &graphics.target, graphics.dsv)
     info_manager_log()
+
+    rasterizer_desc: d3d.RASTERIZER_DESC = {
+        FillMode = .SOLID,
+        CullMode = .NONE
+    }
+
+    result = graphics.device->CreateRasterizerState(&rasterizer_desc, &graphics.rasterizer)
+    gfx_check(result)
+
+    graphics.ctx->RSSetState(graphics.rasterizer)
 
     log.info("Initialized graphics")
 }

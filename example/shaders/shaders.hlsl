@@ -1,9 +1,11 @@
 
 struct vs_in {
 	float3 position : pos;
+    float2 uv       : uv;
 };
 struct vs_out {
 	float4 position : SV_Position;
+    float2 uv       : uv;
 };
 
 cbuffer Vp {
@@ -19,13 +21,14 @@ vs_out vs_main(vs_in input) {
 
     float4 worldPosition = mul(model, float4(input.position, 1));
     output.position = mul(vp, worldPosition);
+    output.uv = input.uv;
 	return output;
 }
 
-cbuffer Palette {
-    float4 colors[6];
-}
+Texture2D tex;
 
-float4 ps_main(uint tid : SV_PrimitiveID) : SV_Target {
-	return colors[tid % 6];
+SamplerState splr;
+
+float4 ps_main(vs_out input) : SV_Target {
+	return tex.Sample(splr, input.uv);
 }
