@@ -4,16 +4,13 @@ import "core:fmt"
 import "core:log"
 import "core:time"
 import "base:runtime"
-import "core:slice"
-import "core:strings"
 import "core:math/linalg"
-import stbi "vendor:stb/image"
 import rd "../src"
 
 SCREENW :: 1280
 SCREENH :: 720
 
-BACKROUND :: [4]f32 {0.1, 0.1, 0.1, 1.0}
+BACKROUND :: [4]f32 {0.13, 0.13, 0.13, 1.0}
 
 Image :: struct {
     pixels: []byte,
@@ -43,16 +40,16 @@ main :: proc() {
     ok = rd.bind(&pixel_shader);  assert(ok)
 
     // Load a mesh
-    cube: Mesh
-    cube, ok = load_mesh_gltf("example/assets/cube.glb"); assert(ok)
+    mesh: Mesh
+    mesh, ok = load_mesh_gltf("example/assets/earth.glb"); assert(ok)
     
     // Load and bind a texture
     image: Image
-    base_tex := rd.load_texture(cube.texture.pixels, u32(cube.texture.size.x), u32(cube.texture.size.y))
+    base_tex := rd.load_texture(mesh.texture.pixels, u32(mesh.texture.size.x), u32(mesh.texture.size.y))
     rd.bind(&base_tex)
     
-    // Create our cube instances
-    cubes := entities_from_mesh(cube, 1000)
+    // Create instance
+    cubes := entities_from_mesh(mesh)
 
     // Create a view-projection matrix
     proj := create_proj_matrix()
@@ -68,7 +65,6 @@ main :: proc() {
     for running {
         // ------ End of Frame -------
         defer {
-            // if frame % 20 == 0 do push_cube_colors()
             frame_time := time.since(now)
             // fmt.println("Frame time:", frame_time)
             free_all(context.temp_allocator)
@@ -101,15 +97,11 @@ main :: proc() {
 
 update :: proc(entitites: #soa[]Entity, frame: u32) {
     dt := f32(time.duration_milliseconds(rd.get_dt()))
-    from_start := int(time.duration_seconds(rd.time_since_start()))
-    toggle: f32 = frame % 120 == 0 ? -1 : 1
     for &e, i in entitites {
         e.physics.rotation = linalg.quaternion_angle_axis_f32(
-            linalg.to_radians(f32(frame) * (f32(i)+1) / 1000), 
-            vec3{0.4, 0.9, -0.5}
+            linalg.to_radians(f32(frame)/5), 
+            vec3{0, 1, 0}
         )
-        e.physics.position += e.physics.direction * dt/500 * linalg.pow(f32(frame%40), 2) * 0.01
-        e.physics.direction *= toggle
     }
 }
 
@@ -133,17 +125,6 @@ draw :: proc(entities: #soa[]Entity, frame: u32) {
 
     // Finish the frame
     rd.frame_end()
-}
-
-load_image :: proc(path: string, loc := #caller_location) -> (img: Image, ok: bool) {
-    path_cstr := strings.unsafe_string_to_cstring(path);
-    fmt.println("Loading:", path_cstr)
-    
-    pixel_data := stbi.load(path_cstr, &img.size.x, &img.size.y, nil, 4)
-    assert(pixel_data != nil, loc = loc)
-    img.pixels = slice.bytes_from_ptr(pixel_data, int(img.size.x * img.size.y * 4))
-    ok = img.pixels == nil
-    return
 }
 
 create_view_matrix :: proc(pitch, yaw: f32, camera_pos: vec3) -> linalg.Matrix4f32 {
@@ -186,13 +167,8 @@ entities_from_mesh :: proc(mesh: Mesh, n := 1, allocator := context.allocator) -
     ibo := rd.create_index_buffer(mesh.indices)
     entities := make_soa(#soa[]Entity, n, allocator = allocator)
     for &e in entities {
-        e.physics.position = {rng.float32_range(-100, 100), rng.float32_range(-100, 100), rng.float32_range(-100, 100)}
+        e.physics.position = n == 1 ? {0, 0, -3} : {rng.float32_range(-100, 100), rng.float32_range(-100, 100), rng.float32_range(-100, -10)}
         e.physics.rotation = linalg.QUATERNIONF32_IDENTITY
-        e.physics.direction = linalg.vector_normalize([3]f32 {
-            rng.float32_range(-1, 1),
-            rng.float32_range(-1, 1),
-            rng.float32_range(-1, 1),
-        })
         e.physics.scale = 2
         e.ibo = ibo
         e.vbo = vbo

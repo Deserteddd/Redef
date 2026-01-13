@@ -1,6 +1,5 @@
 package redef_example
 
-// import rng "core:math/rand"
 import os "core:os/os2"
 import gltf "shared:glTF2"
 import stbi "vendor:stb/image"
@@ -45,13 +44,12 @@ load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #cal
     assert(data.extensions == nil)
 
     gltf_mesh: gltf.Mesh = data.meshes[0]
+    assert(len(gltf_mesh.primitives) == 1)
 
+    // Load vertex buffer
     positions: []vec3
     uvs:       []vec2
-
-    assert(len(gltf_mesh.primitives) == 1)
     primitive := gltf_mesh.primitives[0]
-
     for key, val in primitive.attributes {
         log.debug(key)
         accessor := data.accessors[val]
@@ -82,25 +80,21 @@ load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #cal
     img_view := data.buffer_views[img.buffer_view.?]
     pixels := data.buffers[img_view.buffer].uri.([]byte)[img_view.byte_offset:img_view.byte_offset+img_view.byte_length]
     x, y: i32
-
-    pixels_multiptr := stbi.load_from_memory(raw_data(pixels), i32(len(pixels)), &x, &y, nil, 4)
+    
+    pixels_multiptr := stbi.load_from_memory(
+        raw_data(pixels), 
+        i32(len(pixels)), 
+        &mesh.texture.size.x, 
+        &mesh.texture.size.y, 
+        nil, 4
+    ); if pixels_multiptr == nil do return
     mesh.texture.pixels = slice.from_ptr(pixels_multiptr, int(x*y))
-    mesh.texture.size.x = x
-    mesh.texture.size.y = y
 
 
     ibo_index  := gltf_mesh.primitives[0].indices.?
     mesh.indices = slice.clone(gltf.buffer_slice(data, ibo_index).([]u16))
 
-
     ok = true
-    return
-}
-
-nationalize :: proc(gltf_mesh: gltf.Mesh) -> (mesh: Mesh, ok: bool) {
-    for p in gltf_mesh.primitives {
-
-    }
     return
 }
 
@@ -147,8 +141,6 @@ load_mesh_obj :: proc(path: string, allocator := context.allocator) -> (mesh: Me
     ok = true
     return
 }
-
-
 
 @(private = "file")
 parse_vec3 :: proc(line: string, start: int) -> vec3 {
