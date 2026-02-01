@@ -5,12 +5,6 @@ import "base:runtime"
 import win "core:sys/windows"
 import que "core:container/queue"
 
-/* TODO: 
-[]  Make multiple windows work in a way where each window has it's own event queue
-    and they can be polled independently. Graphics subsystem only supports one window for now.
-*/
-
-
 // -------------------------------------------
 //               Protected
 // -------------------------------------------

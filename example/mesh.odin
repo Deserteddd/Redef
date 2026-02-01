@@ -51,7 +51,6 @@ load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #cal
     uvs:       []vec2
     primitive := gltf_mesh.primitives[0]
     for key, val in primitive.attributes {
-        log.debug(key)
         accessor := data.accessors[val]
         stride := &data.buffer_views[accessor.buffer_view.?].byte_stride
         switch key {

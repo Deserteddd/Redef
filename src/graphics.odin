@@ -56,9 +56,9 @@ IndexBuffer :: struct {
 
 
 // Assumes Texture format 
-load_texture :: proc(pixels: []byte, width, height: u32) -> Texture {
+load_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
     context.logger = g.logger
-    log.debugf("Loading texture: [%v, %v]", width, height)
+    log.debugf("Loading texture: [%v, %v]", width, height, location = loc)
     ensure(pixels != nil)
     tex_desc: d3d.TEXTURE2D_DESC = {
         Width  = width,
@@ -171,10 +171,10 @@ Binds a generic resource to the active pipeline
         Texture
 */
 bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
-    context.logger = g.logger
     if resource == nil do return
-    ok = true
+    context.logger = g.logger
     info_manager_set()
+    ok = true
     switch typeid_of(T) {
         case typeid_of(VertexBuffer):
             vbo := cast(^VertexBuffer)resource
@@ -261,15 +261,21 @@ draw_indexed :: proc(indices: u32) {
 
 
 clear :: proc(color: [4]f32) {
-    using g.graphics
+    context.logger = g.logger
+
+    info_manager_set()
     color := color
-    ctx->ClearRenderTargetView(target, &color)
-    ctx->ClearDepthStencilView(dsv, {.DEPTH}, 1, 0)
+    g.graphics.ctx->ClearRenderTargetView(g.graphics.target, &color)
+    g.graphics.ctx->ClearDepthStencilView(g.graphics.dsv, {.DEPTH}, 1, 0)
+    info_manager_log()
 }
 
 frame_end :: proc() {
-    using g.graphics
-    swapchain->Present(1, {})
+    context.logger = g.logger
+
+    info_manager_set()
+    g.graphics.swapchain->Present(1, {})
+    info_manager_log()
 }
 
 // Entry point must be null terminated
@@ -351,7 +357,7 @@ load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_loca
 }
 
 @(private = "package")
-init_graphics :: proc(window: ^Window, debug: bool) {
+init_graphics :: proc(window: ^Window, debug: bool, loc := #caller_location) {
 sd: dxgi.SWAP_CHAIN_DESC
     {
         using sd
@@ -445,12 +451,11 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     graphics.ctx->RSSetState(graphics.rasterizer)
 
-    log.info("Initialized graphics")
+    log.info("Initialized graphics", location = loc)
 }
 
 @(private = "file")
 get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator) -> []d3d.INPUT_ELEMENT_DESC {
-    log.infof("Creating layout for: %v", type_info_of(vertex_type))
     element_info_from_type :: proc(type: ^runtime.Type_Info) -> dxgi.FORMAT {
         switch type {
             case type_info_of(vec2): return .R32G32_FLOAT
@@ -469,7 +474,6 @@ get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator)
         data[i].AlignedByteOffset = i == 0 ? 0 : d3d.APPEND_ALIGNED_ELEMENT
         data[i].Format = element_info_from_type(field)
         data[i].InputSlotClass = .VERTEX_DATA
-        log.infof("%v -> %v", field, data[i].Format)
     }
     return data
 }

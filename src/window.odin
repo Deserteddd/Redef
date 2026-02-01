@@ -85,12 +85,12 @@ get_dt :: proc() -> time.Duration {
     return elapsed
 }
 
-create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window {
+create_window :: proc (name: string, width, height: i32, debug: bool, loc := #caller_location) -> ^Window {
     if debug && g.window_count == 0 do g.logger = log.create_console_logger()
     context.logger = g.logger
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
-        log.errorf("Failed to init event queue. Allocation error: %v", alloc_err)
+        log.errorf("Failed to init event queue. Allocation error: %v", alloc_err, location = loc)
         return nil
     }
 
@@ -98,14 +98,14 @@ create_window :: proc (name: string, width, height: i32, debug: bool) -> ^Window
     window.size = {width, height}
     window.name = name
     init_windows_window(window)
-    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle)
+    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle, location = loc)
 
     if g.window_count == 0 {
-        init_graphics(window, debug)
+        init_graphics(window, debug, loc = loc)
         g.elapsed = time.now()
         g.dt = time.now()
     } else {
-        log.errorf("Not Implemented: multiple windows")
+        log.errorf("Not Implemented: multiple windows", location = loc)
         return nil
     }
 
