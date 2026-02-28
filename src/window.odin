@@ -14,7 +14,8 @@ Window :: struct {
     name: string,
     handle: WindowHandle,
     window_class: WindowClass,
-    size: [2]i32
+    width,
+    height: i32
 }
 
 KeyboardEventType :: enum {
@@ -65,14 +66,15 @@ MouseEventType :: enum {
 
 Quit :: distinct i32
 
+WindowResized :: struct {w, h: i32}
+
 Event :: union {
     Quit,
     KeyboardEvent,
     MouseEvent,
-    TextInput
+    TextInput,
+    WindowResized
 }
-
-
 
 
 time_since_start :: proc() -> time.Duration {
@@ -95,10 +97,14 @@ create_window :: proc (name: string, width, height: i32, debug: bool, loc := #ca
     }
 
     window := new(Window)
-    window.size = {width, height}
+    window.width = width
+    window.height = height
     window.name = name
     init_windows_window(window)
+    g.windows[window.handle] = window
+
     log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle, location = loc)
+
 
     if g.window_count == 0 {
         init_graphics(window, debug, loc = loc)
@@ -122,21 +128,25 @@ pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool) {
 destroy_window :: proc (w: ^Window, loc := #caller_location){
     // If a window was destroyed the window count can be decremented
     context.logger = g.logger
+    defer g.window_count -= 1
     destroy_window_raw(w.handle, loc)
-
     unregister_window_class(w, loc)
-    free(w)
 
     // Last window deleated -> Should de-init
     if g.window_count == 0 {
         que.destroy(&g.event_queue)
         destroy_graphics(loc)
         log.destroy_console_logger(g.logger)
+        delete(g.windows)
     }
+    free(w)
 }
 
-get_window_size :: proc(w: ^Window) -> [2]i32 {
-    return w.size
+set_window_size :: proc(w: ^Window, size: [2]i32) {
+    context.logger = g.logger
+    w.width = size.x
+    w.height = size.y
+    resize_window(w.handle)
 }
 
 get_window_name :: proc(w: ^Window) -> string {

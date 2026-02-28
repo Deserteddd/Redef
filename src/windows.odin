@@ -19,7 +19,7 @@ init_windows_window :: proc(window: ^Window) -> bool {
     if !ok do return false
 
     // Adjust the rect so the canvas area of the window matches width and height parameters
-    wr: win.RECT = {100, 100, window.size.x + 100, window.size.y + 100}
+    wr: win.RECT = {100, 100, window.width + 100, window.height + 100}
     ok = auto_cast win.AdjustWindowRect(&wr, win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU, win.FALSE)
     if !ok {
         log_win_err()
@@ -30,7 +30,7 @@ init_windows_window :: proc(window: ^Window) -> bool {
     window.handle = cast(WindowHandle)win.CreateWindowW( 
         wc.lpszClassName,
         name_16,
-        win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE,
+        win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE | win.WS_OVERLAPPEDWINDOW,
         win.CW_USEDEFAULT, 
         win.CW_USEDEFAULT,
         wr.right - wr.left,
@@ -39,12 +39,15 @@ init_windows_window :: proc(window: ^Window) -> bool {
         wc.hInstance, 
         window
     )
+    log.debug(window.handle)
     if window.handle == nil {
         log_win_err()
         return false
     }
     return true
 }
+
+
 
 @(private = "package")
 unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
@@ -75,13 +78,27 @@ pump_event_iter_raw :: proc(window: ^Window) -> (event: Event, ok: bool) {
     return
 }
 
+@(private = "package")
+resize_window :: proc(handle: WindowHandle) {
+    // TODO: make window position take into account taskbar size
+    ok := win.SetWindowPos(
+        cast(win.HWND)handle,
+        nil,
+        0,
+        0,
+        g.windows[handle].width,
+        g.windows[handle].height,
+        0x0002 // SWP_NOMOVE
+    )
+    if !ok do log_win_err()
+}
+
 // Returns false if window was already destroyed
 @(private = "package")
 destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
     if !win.IsWindow(win.HWND(handle)) {
         return false
     }
-    defer g.window_count -= 1
     log.debug("Destroying window with handle:", handle, location = loc)
     success := win.DestroyWindow(win.HWND(handle))
     if !success do log_win_err(loc)
@@ -100,10 +117,18 @@ WndProc :: proc "stdcall" (
 ) -> win.LRESULT {
     context = runtime.default_context()
     context.logger = g.logger
+    // log.debug(WindowsMessage(msg))
     switch msg {
         case win.WM_CLOSE:         ok := destroy_window_raw(hwnd); assert(ok)
         case win.WM_DESTROY:       win.PostQuitMessage(auto_cast wparam)
-        
+        case win.WM_SIZE:
+            if auto_cast hwnd not_in g.windows do break
+            x := win.GET_X_LPARAM(lparam)
+            y := win.GET_Y_LPARAM(lparam)
+            g.windows[auto_cast hwnd].width = x
+            g.windows[auto_cast hwnd].height = y
+            resize_graphics(auto_cast hwnd)
+
         // -- Keyboard events --
         case win.WM_KEYDOWN:
             if wparam < 254 do create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
@@ -188,7 +213,7 @@ create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: 
     wc: win.WNDCLASSEXW
     {   using win, wc
         cbSize = size_of(wc)
-        style = CS_OWNDC
+        style = CS_OWNDC | CS_VREDRAW | CS_HREDRAW
         lpfnWndProc = handle_msg_setup
         hInstance = auto_cast hinst
         lpszClassName = name

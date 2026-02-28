@@ -8,9 +8,6 @@ import "base:runtime"
 import "core:math/linalg"
 import rd "../src"
 
-SCREENW :: 1280
-SCREENH :: 720
-
 BACKROUND :: [4]f32 {0.13, 0.13, 0.13, 1.0}
 
 
@@ -19,7 +16,7 @@ shader_src := #load("shaders/shaders.hlsl")
 main :: proc() {
     context.logger = log.create_console_logger()
     // Create a window. Debug mode is enabled when compiled with -debug
-    window := rd.create_window("rd window", SCREENW, SCREENH, ODIN_DEBUG); assert(window != nil)
+    window := rd.create_window("rd window", 1280, 720, ODIN_DEBUG); assert(window != nil)
     // Make sure window gets destroyed
     defer rd.destroy_window(window)
 
@@ -47,11 +44,11 @@ main :: proc() {
     
     // Create instance
     grid_n := 4
-    grid_spacing: f32 = 5
+    grid_spacing: f32 = 6
     cubes := entities_from_mesh(mesh, grid_n, grid_spacing)
 
     // Create a view-projection matrix
-    proj := create_proj_matrix()
+    proj := create_proj_matrix(window)
     view := create_view_matrix(0, 0, 0)
     vp := proj * view
     rd.push_constant_data(.Vertex, &vp, 0)
@@ -59,17 +56,15 @@ main :: proc() {
     // Set variables
     running := true
     frame: u32
-    now := time.now()
+
     // ------ Main loop -------
     for running {
         // ------ End of Frame -------
         defer {
-            frame_time := time.since(now)
             free_all(context.temp_allocator)
-            now = time.now()
             frame += 1
+            // fmt.println(window.width, window.height)
         }
-
         // ------- User Input --------
         for event in rd.pump_event_iter(window) {
             #partial switch ev in event {
@@ -77,6 +72,9 @@ main :: proc() {
                 case rd.Quit: 
                     fmt.println("Received exit code:", ev)
                     running = false
+
+                case rd.WindowResized:
+                    // fmt.println("Window resized to:", ev)
 
                 // Ctrl+C pressed
                 case rd.KeyboardEvent:
@@ -99,16 +97,12 @@ main :: proc() {
                     }
             }
         }
-
-        // -------- Render ----------
         update(&cubes, frame)
-        draw(cubes, frame)
+        draw(window, cubes)
     }
 }
 
 update :: proc(entitites: ^#soa[]Entity, frame: u32) {
-    _ = rd.get_dt()
-    _ = frame
     delta_rotation := linalg.quaternion_angle_axis_f32(
         linalg.to_radians(f32(0.2)),
         vec3{0, 1, 0},
@@ -119,9 +113,14 @@ update :: proc(entitites: ^#soa[]Entity, frame: u32) {
     }
 }
 
-draw :: proc(entities: #soa[]Entity, frame: u32) {
+draw :: proc(window: ^rd.Window, entities: #soa[]Entity) {
     rd.clear(BACKROUND)
     ok: bool
+
+    proj := create_proj_matrix(window)
+    view := create_view_matrix(0, 0, 0)
+    vp := proj * view
+    rd.push_constant_data(.Vertex, &vp, 0)
 
     for &e, i in entities {
         ok = rd.bind(&e.vbo)
@@ -146,9 +145,9 @@ create_view_matrix :: proc(pitch, yaw: f32, camera_pos: vec3) -> linalg.Matrix4f
     return pitch_matrix * yaw_matrix * position_matrix
 }
 
-create_proj_matrix :: proc() -> linalg.Matrix4f32 {
+create_proj_matrix :: proc(window: ^rd.Window) -> linalg.Matrix4f32 {
     using linalg
-    aspect := f32(SCREENW) / f32(SCREENH)
+    aspect := f32(window.width) / f32(window.height)
     return matrix4_perspective_f32(
         to_radians(f32(90)), 
         aspect, 

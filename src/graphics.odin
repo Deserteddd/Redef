@@ -398,7 +398,7 @@ sd: dxgi.SWAP_CHAIN_DESC
     info_manager_set()
     viewport := d3d.VIEWPORT{
         0, 0,
-        f32(window.size.x), f32(window.size.y),
+        f32(window.width), f32(window.height),
         0, 1,
     }
     
@@ -416,8 +416,8 @@ sd: dxgi.SWAP_CHAIN_DESC
     graphics.ctx->OMSetDepthStencilState(dss, 1)
 
     depth_stencil_desc: d3d.TEXTURE2D_DESC = {
-        Width  = u32(window.size.x),
-        Height = u32(window.size.y),
+        Width  = u32(window.width),
+        Height = u32(window.height),
         MipLevels = 1,
         ArraySize = 1,
         Format = .D32_FLOAT,
@@ -452,6 +452,90 @@ sd: dxgi.SWAP_CHAIN_DESC
     graphics.ctx->RSSetState(graphics.rasterizer)
 
     log.info("Initialized graphics", location = loc)
+}
+
+@(private = "package")
+resize_graphics :: proc(handle: WindowHandle) {
+    context.logger = g.logger
+    if handle not_in g.windows do return
+
+    width := g.windows[handle].width
+    height := g.windows[handle].height
+
+    if width <= 0 || height <= 0 do return
+
+    using g
+    info_manager_set()
+
+    graphics.ctx->OMSetRenderTargets(0, nil, nil)
+    info_manager_log()
+
+    if graphics.target != nil {
+        rc := graphics.target->Release()
+        assert(rc == 0)
+        graphics.target = nil
+    }
+
+    if graphics.dsv != nil {
+        rc := graphics.dsv->Release()
+        assert(rc == 0)
+        graphics.dsv = nil
+    }
+
+    result := graphics.swapchain->ResizeBuffers(
+        0,
+        u32(width),
+        u32(height),
+        .UNKNOWN,
+        {}
+    )
+    gfx_check(result)
+
+    backbuffer: ^d3d.IResource
+    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
+    gfx_check(result)
+
+    result = graphics.device->CreateRenderTargetView(backbuffer, nil, &graphics.target)
+    gfx_check(result)
+    rc := backbuffer->Release()
+    assert(rc == 0)
+
+    depth_stencil_desc: d3d.TEXTURE2D_DESC = {
+        Width  = u32(width),
+        Height = u32(height),
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = .D32_FLOAT,
+        SampleDesc = {
+            Count = 1
+        },
+        Usage = .DEFAULT,
+        BindFlags = {.DEPTH_STENCIL}
+    }
+
+    depth_stencil: ^d3d.ITexture2D
+    result = graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
+    gfx_check(result)
+
+    dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
+        Format = .D32_FLOAT,
+        ViewDimension = .TEXTURE2D,
+    }
+    result = graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &graphics.dsv)
+    gfx_check(result)
+
+    rc = depth_stencil->Release()
+    assert(rc == 0)
+
+    graphics.ctx->OMSetRenderTargets(1, &graphics.target, graphics.dsv)
+
+    viewport := d3d.VIEWPORT{
+        0, 0,
+        f32(width), f32(height),
+        0, 1,
+    }
+    graphics.ctx->RSSetViewports(1, &viewport)
+    info_manager_log()
 }
 
 @(private = "file")

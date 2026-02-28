@@ -9,7 +9,10 @@ vec3 :: [3]f32
 vec4 :: [4]f32
 mat4 :: matrix[4,4]f32
 
+Rect :: struct { x, y, w, h: i32 }
+
 EventQueue :: que.Queue(Event)
+
 
 @(private = "package")
 Global :: struct {
@@ -17,6 +20,7 @@ Global :: struct {
     event_queue:    EventQueue,
     mouse_position: [2]i32,
     window_count:   u32,
+    windows:        map[WindowHandle]^Window,
     graphics:       Graphics,
     dt:             time.Time,
     elapsed:        time.Time,
