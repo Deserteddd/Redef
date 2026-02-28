@@ -1,4 +1,4 @@
-# Project plan
+# Project plan - Eelis Autio
 
 An abstraction layer for window management and rendering on Windows. This project is split in two parts: The API and a demo.
 
@@ -11,6 +11,7 @@ The goal is to offer a simple API for:
   - Resize
   - Fullscreen on/off
   - Mouse mode (relative/absolute)
+- Querying the window and IO-devices
 - Event polling
   - User events
   - OS events
@@ -26,13 +27,13 @@ The goal is to offer a simple API for:
 
 The top-level architecture can be seen by looking at the definition of **Global** (found in common.odin).
 
-On initialization, the system creates a window with an associated graphics context and stores the pointers to these internally. Along with them, the system holds some other internal variables such as the keyboard state and event queue. The initialization can be 
+On initialization, the system creates a window with an associated graphics context and stores the pointers to these internally. Along with them, the system holds some other internal variables such as the keyboard state and event queue.
 
-Since DirectX 11 itself operates as a state machine, and the management of GPU resources will be a user-level feature, the system itself doesn't generally need to keep track of GPU-related state. The **Graphics** struct will hold pointers to things like the swapchain and device context, but these resources are internally managed by DX11.
+Since DirectX 11 itself operates as a state machine, and the management of GPU resources will be a user-level feature, the system itself doesn't generally need to keep track of GPU-related state. All GPU-related state will be stored in the **Graphics** struct (eg. pointers to things like the swapchain and device context).
 
 ## The Demo
 
-Game-like program that fully leverages the features provided by the API.
+a game-like program that fully leverages the features provided by the API.
 
 ### Includes
 
@@ -54,9 +55,11 @@ This demo is not meant to be a large project like a game engine. For this reason
 
 ### Libraries
 
+- Odin standard library
 - Win32
 - DirectX 11
-- cgltf (If i decide to go the glTF route)
+- stb_image
+- cgltf (If I decide to go the glTF route)
 
 ### Tools
 

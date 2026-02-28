@@ -20,6 +20,11 @@ Mesh :: struct {
     texture:  Image,
 }
 
+Image :: struct {
+    pixels: []byte,
+    size: [2]i32
+}
+
 vec2 :: [2]f32
 vec3 :: [3]f32
 vec4 :: [4]f32

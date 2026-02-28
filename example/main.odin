@@ -12,17 +12,13 @@ SCREENH :: 720
 
 BACKROUND :: [4]f32 {0.13, 0.13, 0.13, 1.0}
 
-Image :: struct {
-    pixels: []byte,
-    size: [2]i32
-}
 
 shader_src := #load("shaders/shaders.hlsl")
 
 main :: proc() {
     context.logger = log.create_console_logger()
     // Create a window. Debug mode is enabled when compiled with -debug
-    window := rd.create_window("Big pp window", SCREENW, SCREENH, ODIN_DEBUG); assert(window != nil)
+    window := rd.create_window("rd window", SCREENW, SCREENH, ODIN_DEBUG); assert(window != nil)
     // Make sure window gets destroyed
     defer rd.destroy_window(window)
 
@@ -49,7 +45,9 @@ main :: proc() {
     rd.bind(&base_tex)
     
     // Create instance
-    cubes := entities_from_mesh(mesh)
+    grid_n := 4
+    grid_spacing: f32 = 5
+    cubes := entities_from_mesh(mesh, grid_n, grid_spacing)
 
     // Create a view-projection matrix
     proj := create_proj_matrix()
@@ -66,7 +64,6 @@ main :: proc() {
         // ------ End of Frame -------
         defer {
             frame_time := time.since(now)
-            // fmt.println("Frame time:", frame_time)
             free_all(context.temp_allocator)
             now = time.now()
             frame += 1
@@ -82,20 +79,33 @@ main :: proc() {
 
                 // Ctrl+C pressed
                 case rd.KeyboardEvent:
-                    if ev.key == .C && .CONTROL in ev.mod {
-                        running = false
+                    if ev.type == .KeyDown || ev.type == .Repeat {
+                        #partial switch ev.key {
+                            case .C:
+                                if .CONTROL in ev.mod do running = false
+                            case .ESCAPE:
+                                running = false
+                            case .OEM_PLUS, .ADD, .W:
+                                grid_spacing += 0.25
+                                layout_entities_in_grid(cubes, grid_n, grid_spacing)
+                                fmt.println("grid spacing:", grid_spacing)
+                            case .OEM_MINUS, .SUBTRACT, .S:
+                                grid_spacing -= 0.25
+                                if grid_spacing < 0.25 do grid_spacing = 0.25
+                                layout_entities_in_grid(cubes, grid_n, grid_spacing)
+                                fmt.println("grid spacing:", grid_spacing)
+                        }
                     }
             }
         }
 
         // -------- Render ----------
-        update(cubes, frame)
+        update(&cubes, frame)
         draw(cubes, frame)
-        
     }
 }
 
-update :: proc(entitites: #soa[]Entity, frame: u32) {
+update :: proc(entitites: ^#soa[]Entity, frame: u32) {
     dt := f32(time.duration_milliseconds(rd.get_dt()))
     for &e, i in entitites {
         e.physics.rotation = linalg.quaternion_angle_axis_f32(
@@ -110,10 +120,8 @@ draw :: proc(entities: #soa[]Entity, frame: u32) {
     ok: bool
 
     for &e, i in entities {
-        if i == 0 {
-            ok = rd.bind(&e.vbo)
-            ok = rd.bind(&e.ibo)
-        }
+        ok = rd.bind(&e.vbo)
+        ok = rd.bind(&e.ibo)
         model_matrix := linalg.matrix4_from_trs_f32(
             t = e.physics.position, 
             r = e.physics.rotation,
@@ -123,7 +131,6 @@ draw :: proc(entities: #soa[]Entity, frame: u32) {
         rd.draw_indexed(e.ibo.length)
     }
 
-    // Finish the frame
     rd.frame_end()
 }
 
@@ -159,19 +166,38 @@ Physics :: struct {
     direction:  vec3,
 }
 
-import rng "core:math/rand"
+entities_from_mesh :: proc(mesh: Mesh, n: int, spacing: f32 = 1, allocator := context.allocator) -> #soa[]Entity {
+    if n <= 0 {
+        return make_soa(#soa[]Entity, 0, allocator = allocator)
+    }
 
-entities_from_mesh :: proc(mesh: Mesh, n := 1, allocator := context.allocator) -> #soa[]Entity {
-    n := n
+    total := n * n * n
     vbo := rd.create_vertex_buffer(mesh.vertices)
     ibo := rd.create_index_buffer(mesh.indices)
-    entities := make_soa(#soa[]Entity, n, allocator = allocator)
-    for &e in entities {
-        e.physics.position = n == 1 ? {0, 0, -3} : {rng.float32_range(-100, 100), rng.float32_range(-100, 100), rng.float32_range(-100, -10)}
-        e.physics.rotation = linalg.QUATERNIONF32_IDENTITY
-        e.physics.scale = 2
+    entities := make_soa(#soa[]Entity, total, allocator = allocator)
+    for &e, index in entities {
+        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(30)), {0, 1, 0})
+        e.physics.scale = 1
         e.ibo = ibo
         e.vbo = vbo
     }
+
+    layout_entities_in_grid(entities, n, spacing)
     return entities
+}
+
+layout_entities_in_grid :: proc(entities: #soa[]Entity, n: int, spacing: f32) {
+    if n <= 0 do return
+    center := f32(n - 1) * 0.5
+    for &e, index in entities {
+        x := index % n
+        y := (index / n) % n
+        z := index / (n * n)
+
+        e.physics.position = {
+            (f32(x) - center) * spacing,
+            (f32(y) - center) * spacing,
+            (f32(z) - center) * spacing - 10,
+        }
+    }
 }
