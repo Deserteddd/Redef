@@ -3,6 +3,7 @@ package redef_example
 import "core:fmt"
 import "core:log"
 import "core:time"
+import rng "core:math/rand"
 import "base:runtime"
 import "core:math/linalg"
 import rd "../src"
@@ -106,12 +107,15 @@ main :: proc() {
 }
 
 update :: proc(entitites: ^#soa[]Entity, frame: u32) {
-    dt := f32(time.duration_milliseconds(rd.get_dt()))
+    _ = rd.get_dt()
+    _ = frame
+    delta_rotation := linalg.quaternion_angle_axis_f32(
+        linalg.to_radians(f32(0.2)),
+        vec3{0, 1, 0},
+    )
     for &e, i in entitites {
-        e.physics.rotation = linalg.quaternion_angle_axis_f32(
-            linalg.to_radians(f32(frame)/5), 
-            vec3{0, 1, 0}
-        )
+        _ = i
+        e.physics.rotation = delta_rotation * e.physics.rotation
     }
 }
 
@@ -176,7 +180,9 @@ entities_from_mesh :: proc(mesh: Mesh, n: int, spacing: f32 = 1, allocator := co
     ibo := rd.create_index_buffer(mesh.indices)
     entities := make_soa(#soa[]Entity, total, allocator = allocator)
     for &e, index in entities {
-        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(f32(30)), {0, 1, 0})
+        _ = index
+        initial_angle := rng.float32_range(0, 360)
+        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_angle), vec3{0, 1, 0})
         e.physics.scale = 1
         e.ibo = ibo
         e.vbo = vbo
