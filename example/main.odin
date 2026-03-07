@@ -11,6 +11,8 @@ import rd "../src"
 
 BACKROUND :: [4]f32 {0.13, 0.13, 0.13, 1.0}
 
+vec3 :: rd.vec3
+
 
 shader_src := #load("shaders/shaders.hlsl")
 
@@ -126,6 +128,24 @@ draw :: proc(entities: #soa[]Entity, camera: Camera) {
     vp := proj * view
     rd.push_constant_data(.Vertex, &vp, 0)
 
+    camera_cb := CameraBuffer {
+        camera_pos = camera_position(camera),
+        _pad0 = 0,
+    }
+    rd.push_constant_data(.Pixel, &camera_cb, 0)
+
+    lighting_cb := PointLight {
+        position = {0, 0, -120},
+        intensity = 4.0,
+        color = {1.0, 0.98, 0.92},
+        range = 400.0,
+        attenuation_constant = 1.0,
+        attenuation_linear = 0.015,
+        attenuation_quadratic = 0.001,
+        _pad0 = 0,
+    }
+    rd.push_constant_data(.Pixel, &lighting_cb, 1)
+
     for &e, i in entities {
         ok = rd.bind(&e.vbo)
         ok = rd.bind(&e.ibo)
@@ -205,14 +225,6 @@ update_camera_from_relative_mouse_stub :: proc(camera: ^Camera) {
     clamp_camera(camera)
 }
 
-create_view_matrix :: proc(pitch, yaw: f32, camera_pos: vec3) -> linalg.Matrix4f32 {
-    using linalg
-    pitch_matrix := matrix4_rotate_f32(to_radians(pitch), {1, 0, 0})
-    yaw_matrix := matrix4_rotate_f32(to_radians(yaw), {0, 1, 0})
-    position_matrix := matrix4_translate_f32(camera_pos)
-    return pitch_matrix * yaw_matrix * position_matrix
-}
-
 create_proj_matrix :: proc() -> linalg.Matrix4f32 {
     using linalg
     window_size := rd.get_window_size()
@@ -261,49 +273,45 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
     ibo := rd.create_index_buffer(mesh.indices)
     entities := make_soa(#soa[]Entity, total, allocator = allocator)
 
-    // World-space mapping tuned for readability:
-    // - Orbit radius uses sqrt(AU) so outer planets are much closer together
-    // - Planet radii are strongly remapped so rocky planets read closer to giants
-    // - Sun is intentionally reduced (still much larger than planets)
-    earth_scale: f32 = 0.30
-    au_to_world: f32 = 22.0
-    center_z: f32 = -120.0
-    sun_radius_earth_visual: f32 = 18.0
-    planet_radius_boost: f32 = 2.2
-    rocky_radius_lift: f32 = 1.6
-    giant_radius_compress: f32 = 0.75
-    min_planet_radius_earth_visual: f32 = 1.8
-    max_planet_radius_earth_visual: f32 = 6.5
-
     for &e, index in entities {
         body := bodies[index]
         initial_angle := rng.float32_range(0, 360)
         e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_angle), vec3{0, 1, 0})
 
-        visual_radius_earth := body.radius_earth
+        radius_earth := body.radius_earth
         if index == 0 {
-            visual_radius_earth = sun_radius_earth_visual
+            radius_earth = 18.0
         } else {
-            visual_radius_earth = body.radius_earth * planet_radius_boost
-            if body.radius_earth <= 1.1 {
-                visual_radius_earth += rocky_radius_lift
-            }
-            if body.radius_earth >= 8.0 {
-                visual_radius_earth *= giant_radius_compress
-            }
-            visual_radius_earth = math.clamp(
-                visual_radius_earth,
-                min_planet_radius_earth_visual,
-                max_planet_radius_earth_visual,
+            radius_earth = 3.8 * math.sqrt(body.radius_earth)
+            radius_earth = math.clamp(
+                radius_earth,
+                1.8,
+                6.5,
             )
         }
 
-        uniform_scale := earth_scale * visual_radius_earth
+        uniform_scale := 0.30 * radius_earth
         e.physics.scale = vec3{uniform_scale, uniform_scale, uniform_scale}
-        orbit_radius := math.sqrt(body.orbital_radius_au) * au_to_world
-        e.physics.position = vec3{orbit_radius, 0, center_z}
+        orbit_radius := math.sqrt(body.orbital_radius_au) * 22.0
+        e.physics.position = vec3{orbit_radius, 0, -120.0}
         e.ibo = ibo
         e.vbo = vbo
     }
     return entities
+}
+
+PointLight :: struct {
+    position:               rd.vec3,
+    intensity:              f32,
+    color:                  rd.vec3,
+    range:                  f32,
+    attenuation_constant:   f32,
+    attenuation_linear:     f32,
+    attenuation_quadratic:  f32,
+    _pad0:                  f32,
+}
+
+CameraBuffer :: struct {
+    camera_pos: rd.vec3,
+    _pad0:      f32,
 }

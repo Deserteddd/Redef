@@ -26,7 +26,6 @@ Image :: struct {
 }
 
 vec2 :: [2]f32
-vec3 :: [3]f32
 vec4 :: [4]f32
 
 load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #caller_location) -> (mesh: Mesh, ok: bool) {
