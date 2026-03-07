@@ -357,7 +357,7 @@ load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_loca
 }
 
 @(private = "package")
-init_graphics :: proc(window: ^Window, debug: bool, loc := #caller_location) {
+init_graphics :: proc(debug: bool, loc := #caller_location) {
 sd: dxgi.SWAP_CHAIN_DESC
     {
         using sd
@@ -365,7 +365,7 @@ sd: dxgi.SWAP_CHAIN_DESC
         SampleDesc.Count = 1
         BufferUsage = {.RENDER_TARGET_OUTPUT}
         BufferCount = 1
-        OutputWindow = cast(dxgi.HWND)window.handle
+        OutputWindow = cast(dxgi.HWND)g.window.handle
         Windowed = true
         SwapEffect = .DISCARD
     }
@@ -451,16 +451,16 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     graphics.ctx->RSSetState(graphics.rasterizer)
 
+    graphics_init = true
     log.info("Initialized graphics", location = loc)
 }
 
 @(private = "package")
-resize_graphics :: proc(handle: WindowHandle) {
+resize_graphics :: proc() {
     context.logger = g.logger
-    if handle not_in g.windows do return
 
-    width := g.windows[handle].width
-    height := g.windows[handle].height
+    width := g.window.width
+    height := g.window.height
 
     if width <= 0 || height <= 0 do return
 

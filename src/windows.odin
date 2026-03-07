@@ -12,22 +12,23 @@ import que "core:container/queue"
 WindowClass :: win.WNDCLASSEXW
 
 @(private = "package")
-init_windows_window :: proc(window: ^Window) -> bool {
+init_windows_window :: proc() -> bool {
     context.logger = g.logger
-    name_16 := string_to_cstring16(window.name)
+    name_16 := string_to_cstring16(g.window.name)
     wc, ok := create_window_class(name_16)
     if !ok do return false
 
     // Adjust the rect so the canvas area of the window matches width and height parameters
-    wr: win.RECT = {100, 100, window.width + 100, window.height + 100}
+    wr: win.RECT = {100, 100, g.window.width + 100, g.window.height + 100}
     ok = auto_cast win.AdjustWindowRect(&wr, win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU, win.FALSE)
     if !ok {
         log_win_err()
         return false
     }
 
+
     // window dimensions are meant to be user accessible and so they should match the canvas size
-    window.handle = cast(WindowHandle)win.CreateWindowW( 
+    handle: WindowHandle = cast(WindowHandle)win.CreateWindowW( 
         wc.lpszClassName,
         name_16,
         win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE | win.WS_OVERLAPPEDWINDOW,
@@ -37,10 +38,12 @@ init_windows_window :: proc(window: ^Window) -> bool {
         wr.bottom - wr.top,
         nil, nil, 
         wc.hInstance, 
-        window
+        &g.window
     )
-    log.debug(window.handle)
-    if window.handle == nil {
+    g.window.handle = handle
+
+    log.debug(g.window.handle)
+    if g.window.handle == nil {
         log_win_err()
         return false
     }
@@ -50,14 +53,14 @@ init_windows_window :: proc(window: ^Window) -> bool {
 
 
 @(private = "package")
-unregister_window_class :: proc(w: ^Window, loc := #caller_location) {
-    assert(w != nil)
-    ok := win.UnregisterClassW(string_to_cstring16(w.name), w.window_class.hInstance)
+unregister_window_class :: proc(loc := #caller_location) {
+    assert(g.window.handle != nil)
+    ok := win.UnregisterClassW(string_to_cstring16(g.window.name), g.window.window_class.hInstance)
     if !ok do log_win_err()
 }
 
 @(private = "package")
-pump_event_iter_raw :: proc(window: ^Window) -> (event: Event, ok: bool) {
+pump_event_iter_raw :: proc() -> (event: Event, ok: bool) {
     msg: win.MSG
 
     for win.PeekMessageW(&msg, nil, 0, 0, win.PM_REMOVE){
@@ -86,8 +89,8 @@ resize_window :: proc(handle: WindowHandle) {
         nil,
         0,
         0,
-        g.windows[handle].width,
-        g.windows[handle].height,
+        g.window.width,
+        g.window.height,
         0x0002 // SWP_NOMOVE
     )
     if !ok do log_win_err()
@@ -117,17 +120,20 @@ WndProc :: proc "stdcall" (
 ) -> win.LRESULT {
     context = runtime.default_context()
     context.logger = g.logger
+    assert(&g.window.handle != auto_cast hwnd)
     // log.debug(WindowsMessage(msg))
     switch msg {
         case win.WM_CLOSE:         ok := destroy_window_raw(hwnd); assert(ok)
         case win.WM_DESTROY:       win.PostQuitMessage(auto_cast wparam)
         case win.WM_SIZE:
-            if auto_cast hwnd not_in g.windows do break
+            // if auto_cast hwnd not_in g.windows do break
             x := win.GET_X_LPARAM(lparam)
             y := win.GET_Y_LPARAM(lparam)
-            g.windows[auto_cast hwnd].width = x
-            g.windows[auto_cast hwnd].height = y
-            resize_graphics(auto_cast hwnd)
+            g.window.width = x
+            g.window.height = y
+            
+            // Graphics need to be initialized before resizing
+            if g.graphics.ctx != nil do resize_graphics()
 
         // -- Keyboard events --
         case win.WM_KEYDOWN:
@@ -154,10 +160,15 @@ WndProc :: proc "stdcall" (
         case win.WM_MOUSEWHEEL: 
             create_mouse_event(.MWheel, lparam, wparam)
         
+        // Move
         case win.WM_MOUSEMOVE:
-            x := win.GET_X_LPARAM(lparam)
-            y := win.GET_Y_LPARAM(lparam)
-            g.mouse_position = {x, y}
+            mpos := g.mouse_position
+            create_mouse_event(.Move, lparam)
+            g.mouse_delta = mpos - g.mouse_position
+
+        case win.WM_NCMOUSELEAVE:
+            g.mouse.button_state = {}
+
         case win.WM_SETCURSOR: win.SetCursor(win.LoadCursorA(nil, win.IDC_ARROW));
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -187,11 +198,21 @@ create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wpara
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
     if event_type == .MWheel {
-        x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam))
+        x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam)) / 120
         y = 0
     } else {
         g.mouse_position = {x, y}
     }
+
+    #partial switch event_type {
+        case .LPress:   g.mouse.button_state += { .LEFT }
+        case .LRelease: g.mouse.button_state -= { .LEFT }
+        case .RPress:   g.mouse.button_state += { .RIGHT }
+        case .RRelease: g.mouse.button_state -= { .RIGHT }
+        case .MPress:   g.mouse.button_state += { .MIDDLE }
+        case .MRelease: g.mouse.button_state -= { .MIDDLE }
+    }
+
     mod: ModKeys
     mod += g.kb_state[.CONTROL] ? {.CONTROL} : {}
     mod += g.kb_state[.SHIFT] ? {.SHIFT} : {}

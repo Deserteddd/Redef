@@ -8,20 +8,26 @@ The goal is to offer a simple API for:
 
 - Creating and destroying a window
 - Window controls
-  - Resize
-  - Fullscreen on/off
-  - Mouse mode (relative/absolute)
-- Querying the window and IO-devices
-- Event polling
-  - User events
-  - OS events
-- Creating and binding GPU resources:
-  - Shaders
-  - Vertex buffers
-  - Index buffers
-  - Constant buffers
-  - Textures
-- Issuing draw calls (direct)
+  - Resize                              [Done]
+  - Fullscreen on/off                   []
+  - Mouse mode (relative/absolute)      [WIP]
+- Querying the window                   [X]
+- Queyring IO-devices                   [Mouse missing]
+- Event polling                         []
+  - User events                         [Done]
+  - OS events                           []
+- Creating and binding GPU resources:   []
+  - Shaders                             [Done]
+  - Vertex buffers                      [Done]
+  - Index buffers                       [Done]
+  - Constant buffers                    [Done]
+  - Textures                            [Done]
+- Issuing draw calls (direct)           [Missing index controls]
+
+## TODO
+
+[]  Unify API by using vec2
+[]  Unify enum casing
 
 ### Architecture
 

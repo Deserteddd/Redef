@@ -19,12 +19,17 @@ Global :: struct {
     kb_state:       KeyboardState,
     event_queue:    EventQueue,
     mouse_position: [2]i32,
-    window_count:   u32,
-    windows:        map[WindowHandle]^Window,
+    mouse_delta:    [2]i32,
+    // window_count:   u32,
+    // windows:        map[WindowHandle]^Window,
+    window:         Window,
     graphics:       Graphics,
     dt:             time.Time,
     elapsed:        time.Time,
     logger:         log.Logger,
+    window_mode:    WindowMode,
+    graphics_init:  bool,
+    mouse:          Mouse,
 }
 
 @(private = "package")

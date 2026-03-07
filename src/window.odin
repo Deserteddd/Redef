@@ -5,7 +5,6 @@ import "core:log"
 import "core:time"
 import que "core:container/queue"
 
-// Todo: Remove Windows import
 KeyboardState :: #sparse[Keycode]bool
 
 WindowHandle :: distinct rawptr
@@ -16,6 +15,12 @@ Window :: struct {
     window_class: WindowClass,
     width,
     height: i32
+}
+
+WindowMode :: enum {
+    WINDOW,
+    MAXIMIZED,
+    BORDERLESS
 }
 
 KeyboardEventType :: enum {
@@ -87,59 +92,53 @@ get_dt :: proc() -> time.Duration {
     return elapsed
 }
 
-create_window :: proc (name: string, width, height: i32, debug: bool, loc := #caller_location) -> ^Window {
-    if debug && g.window_count == 0 do g.logger = log.create_console_logger()
+create_window :: proc (name: string, width, height: i32, debug: bool, loc := #caller_location) -> bool{
+    if debug do g.logger = log.create_console_logger()
     context.logger = g.logger
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
         log.errorf("Failed to init event queue. Allocation error: %v", alloc_err, location = loc)
-        return nil
+        return false
     }
+    g.window.width = width
+    g.window.height = height
+    g.window.name = name
+    init_windows_window()
 
-    window := new(Window)
-    window.width = width
-    window.height = height
-    window.name = name
-    init_windows_window(window)
-    g.windows[window.handle] = window
+    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(g.window.name), g.window.handle, location = loc)
 
-    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(window.name), window.handle, location = loc)
-
-
-    if g.window_count == 0 {
-        init_graphics(window, debug, loc = loc)
-        g.elapsed = time.now()
-        g.dt = time.now()
-    } else {
-        log.errorf("Not Implemented: multiple windows", location = loc)
-        return nil
-    }
-
-    g.window_count += 1
-    return window
+    init_graphics(debug, loc = loc)
+    g.elapsed = time.now()
+    g.dt = time.now()
+    return true
+    // g.window_count += 1
 }
 
 
-pump_event_iter :: proc(window: ^Window) -> (event: Event, ok: bool) {
+pump_event_iter :: proc() -> (event: Event, ok: bool) {
     context.logger = g.logger
-    return pump_event_iter_raw(window)
+    return pump_event_iter_raw()
 }
 
-destroy_window :: proc (w: ^Window, loc := #caller_location){
+destroy_window :: proc (loc := #caller_location){
     // If a window was destroyed the window count can be decremented
     context.logger = g.logger
-    defer g.window_count -= 1
-    destroy_window_raw(w.handle, loc)
-    unregister_window_class(w, loc)
+    // defer g.window_count -= 1
+    destroy_window_raw(g.window.handle, loc)
+    unregister_window_class(loc)
 
     // Last window deleated -> Should de-init
-    if g.window_count == 0 {
+    // if g.window_count == 0 {
         que.destroy(&g.event_queue)
         destroy_graphics(loc)
         log.destroy_console_logger(g.logger)
-        delete(g.windows)
-    }
-    free(w)
+        // delete(g.window)
+    // }
+    // free(w)
+}
+
+get_window_size :: proc() -> vec2 {
+    return {f32(g.window.width), f32(g.window.height)}
 }
 
 set_window_size :: proc(w: ^Window, size: [2]i32) {
@@ -149,10 +148,25 @@ set_window_size :: proc(w: ^Window, size: [2]i32) {
     resize_window(w.handle)
 }
 
-get_window_name :: proc(w: ^Window) -> string {
-    return w.name
+set_window_mode :: proc(wm: WindowMode, loc := #caller_location) {
+    context.logger = g.logger
+    if g.window_mode == wm do return
+    log.debug("Setting window mode:", wm, location = loc)
+    g.window_mode = wm
+    
+
 }
 
 get_mouse_position :: proc() -> (x: f32, y: f32) {
     return f32(g.mouse_position.x), f32(g.mouse_position.y)
+}
+
+get_relative_mouse_movement :: proc() -> [2]i32 {
+    delta := g.mouse_delta
+    g.mouse_delta = 0
+    return delta
+}
+
+is_key_down :: proc(key: Keycode) -> bool {
+    return g.kb_state[key]
 }
