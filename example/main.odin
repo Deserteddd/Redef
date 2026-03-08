@@ -2,14 +2,19 @@ package redef_example
 
 import "core:fmt"
 import "core:log"
-import "core:time"
 import "core:math"
-import rng "core:math/rand"
+import "core:time"
+import os "core:os/os2"
+import "core:slice"
 import "base:runtime"
 import "core:math/linalg"
+import rng "core:math/rand"
+import stbi "vendor:stb/image"
 import rd "../src"
 
-BACKROUND :: [4]f32 {0.13, 0.13, 0.13, 1.0}
+BACKGROUND :: [4]f32 {0, 0, 0, 0}
+ORBIT_CENTER :: vec3 {0, 0, -120}
+EARTH_ORBIT_SECONDS :: f32(20.0)
 
 vec3 :: rd.vec3
 
@@ -34,6 +39,9 @@ main :: proc() {
     pixel_shader: rd.PixelShader
     pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_main"); assert(ok)
 
+    sun_pixel_shader: rd.PixelShader
+    sun_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_sun"); assert(ok)
+
     // Bind shaders
     ok = rd.bind(&vertex_shader); assert(ok)
     ok = rd.bind(&pixel_shader);  assert(ok)
@@ -43,12 +51,12 @@ main :: proc() {
     mesh, ok = load_mesh_gltf("example/assets/earth.glb"); assert(ok)
     
     // Load and bind a texture
-    image: Image
     base_tex := rd.load_texture(mesh.texture.pixels, u32(mesh.texture.size.x), u32(mesh.texture.size.y))
     rd.bind(&base_tex)
     
     // Create entities: Sun + planets
     cubes := entities_from_mesh(mesh)
+    assign_planet_textures(&cubes)
 
     camera := create_orbital_camera()
 
@@ -105,23 +113,45 @@ main :: proc() {
         clamp_camera(&camera)
         if rd.is_lmb_down() do update_camera_from_relative_mouse_stub(&camera) 
         update(&cubes, frame)
-        draw(cubes, camera)
+        draw(cubes, camera, &base_tex, &pixel_shader, &sun_pixel_shader)
     }
 }
 
 update :: proc(entitites: ^#soa[]Entity, frame: u32) {
+    _ = frame
+    dt_seconds := f32(rd.get_dt()) / f32(time.Second)
+
     delta_rotation := linalg.quaternion_angle_axis_f32(
-        linalg.to_radians(f32(0.2)),
+        linalg.to_radians(f32(22.0) * dt_seconds),
         vec3{0, 1, 0},
     )
+
     for &e, i in entitites {
-        _ = i
+        if i > 0 {
+            e.orbit_angle_deg += e.orbit_speed_deg * dt_seconds
+            if e.orbit_angle_deg >= 360.0 {
+                e.orbit_angle_deg -= 360.0
+            }
+
+            orbit_radians := linalg.to_radians(e.orbit_angle_deg)
+            e.physics.position = ORBIT_CENTER + vec3 {
+                e.orbit_radius * math.sin(orbit_radians),
+                0,
+                e.orbit_radius * math.cos(orbit_radians),
+            }
+        }
         e.physics.rotation = delta_rotation * e.physics.rotation
     }
 }
 
-draw :: proc(entities: #soa[]Entity, camera: Camera) {
-    rd.clear(BACKROUND)
+draw :: proc(
+    entities: #soa[]Entity,
+    camera: Camera, 
+    default_texture: ^rd.Texture,
+    pixel_shader: ^rd.PixelShader,
+    sun_pixel_shader: ^rd.PixelShader
+) {
+    rd.clear(BACKGROUND)
     ok: bool
     proj := create_proj_matrix()
     view := camera_view_matrix(camera)
@@ -147,8 +177,18 @@ draw :: proc(entities: #soa[]Entity, camera: Camera) {
     rd.push_constant_data(.Pixel, &lighting_cb, 1)
 
     for &e, i in entities {
+        if i == 0 {
+            ok = rd.bind(sun_pixel_shader)
+        } else {
+            ok = rd.bind(pixel_shader)
+        }
         ok = rd.bind(&e.vbo)
         ok = rd.bind(&e.ibo)
+        if e.texture_override.view != nil {
+            ok = rd.bind(&e.texture_override)
+        } else {
+            ok = rd.bind(default_texture)
+        }
         model_matrix := linalg.matrix4_from_trs_f32(
             t = e.physics.position, 
             r = e.physics.rotation,
@@ -159,6 +199,57 @@ draw :: proc(entities: #soa[]Entity, camera: Camera) {
     }
 
     rd.frame_end()
+}
+
+assign_planet_textures :: proc(entities: ^#soa[]Entity) {
+    texture_paths := [9]string {
+        "example/assets/planet_textures/2k_venus_surface.jpg",
+        "example/assets/planet_textures/2k_mercury.jpg",
+        "example/assets/planet_textures/2k_venus_atmosphere.jpg",
+        "", // Earth: fallback to mesh/default texture
+        "example/assets/planet_textures/2k_mars.jpg",
+        "example/assets/planet_textures/2k_jupiter.jpg",
+        "example/assets/planet_textures/2k_saturn.jpg",
+        "example/assets/planet_textures/2k_uranus.jpg",
+        "example/assets/planet_textures/2k_neptune.jpg",
+    }
+
+    for &entity, index in entities^ {
+        path := texture_paths[index]
+        if path == "" do continue
+        texture, ok := load_texture_from_file(path)
+        if !ok {
+            log.warnf("Could not load texture override for entity %v: %v", index, path)
+            continue
+        }
+        entity.texture_override = texture
+    }
+}
+
+load_texture_from_file :: proc(path: string, allocator := context.temp_allocator) -> (texture: rd.Texture, ok: bool) {
+    file_data, read_err := os.read_entire_file_from_path(path, allocator)
+    if read_err != nil {
+        return
+    }
+
+    width, height: i32
+    pixels_ptr := stbi.load_from_memory(
+        raw_data(file_data),
+        i32(len(file_data)),
+        &width,
+        &height,
+        nil,
+        4,
+    )
+    if pixels_ptr == nil {
+        return
+    }
+
+    pixel_count := int(width * height * 4)
+    pixels := slice.from_ptr(pixels_ptr, pixel_count)
+    texture = rd.load_texture(pixels, u32(width), u32(height))
+    ok = true
+    return
 }
 
 Camera :: struct {
@@ -238,9 +329,13 @@ create_proj_matrix :: proc() -> linalg.Matrix4f32 {
 }
 
 Entity :: struct {
-    physics:    Physics,
-    vbo:        rd.VertexBuffer,
-    ibo:        rd.IndexBuffer
+    physics:          Physics,
+    vbo:              rd.VertexBuffer,
+    ibo:              rd.IndexBuffer,
+    texture_override: rd.Texture,
+    orbit_radius:     f32,
+    orbit_speed_deg:  f32,
+    orbit_angle_deg:  f32,
 }
 
 Physics :: struct {
@@ -275,8 +370,8 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
 
     for &e, index in entities {
         body := bodies[index]
-        initial_angle := rng.float32_range(0, 360)
-        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_angle), vec3{0, 1, 0})
+        initial_spin_angle := rng.float32_range(0, 360)
+        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), vec3{0, 1, 0})
 
         radius_earth := body.radius_earth
         if index == 0 {
@@ -292,8 +387,26 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
 
         uniform_scale := 0.30 * radius_earth
         e.physics.scale = vec3{uniform_scale, uniform_scale, uniform_scale}
-        orbit_radius := math.sqrt(body.orbital_radius_au) * 22.0
-        e.physics.position = vec3{orbit_radius, 0, -120.0}
+        e.orbit_radius = math.sqrt(body.orbital_radius_au) * 22.0
+        e.orbit_angle_deg = index == 0 ? 0 : rng.float32_range(0, 360)
+
+        if index == 0 {
+            e.orbit_speed_deg = 0
+        } else {
+            // Kepler-like scaling: orbital period grows with distance^(3/2).
+            // 1 AU (Earth) is mapped to EARTH_ORBIT_SECONDS in simulation time.
+            orbital_distance_au := body.orbital_radius_au
+            orbital_period_years := orbital_distance_au * math.sqrt(orbital_distance_au)
+            orbital_period_seconds := EARTH_ORBIT_SECONDS * orbital_period_years
+            e.orbit_speed_deg = 360.0 / orbital_period_seconds
+        }
+
+        angle_radians := linalg.to_radians(e.orbit_angle_deg)
+        e.physics.position = ORBIT_CENTER + vec3 {
+            e.orbit_radius * math.sin(angle_radians),
+            0,
+            e.orbit_radius * math.cos(angle_radians),
+        }
         e.ibo = ibo
         e.vbo = vbo
     }

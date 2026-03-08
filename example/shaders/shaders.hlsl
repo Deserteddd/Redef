@@ -91,3 +91,14 @@ float4 ps_main(vs_out input) : SV_Target {
     float3 color = ambient + attenuation * (diffuse + specular);
     return float4(saturate(color), 1.0);
 }
+
+float4 ps_sun(vs_out input) : SV_Target {
+    float3 albedo = tex.Sample(splr, input.uv).rgb;
+    float3 normal = normalize(input.normal);
+    float3 view_dir = normalize(camera_pos - input.world_pos);
+
+    // Fresnel-like rim term adds a soft halo near the silhouette.
+    float rim = pow(1.0 - saturate(dot(normal, view_dir)), 2.5);
+    float3 glow = albedo * 1.8 + float3(1.0, 0.65, 0.25) * rim * 0.9;
+    return float4(saturate(glow), 1.0);
+}

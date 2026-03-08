@@ -53,8 +53,6 @@ IndexBuffer :: struct {
     length: u32,
 }
 
-
-
 // Assumes Texture format 
 load_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
     context.logger = g.logger
