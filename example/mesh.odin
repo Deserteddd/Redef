@@ -1,11 +1,6 @@
 package redef_example
 
-import os "core:os/os2"
 import gltf "shared:glTF2"
-import stbi "vendor:stb/image"
-import "core:strings"
-import "core:strconv"
-import "core:fmt"
 import "core:log"
 import "core:slice"
 
@@ -17,7 +12,6 @@ Vertex :: struct {
 Mesh :: struct {
     vertices: []Vertex,
     indices:  []u16,
-    texture:  Image,
 }
 
 Image :: struct {
@@ -77,87 +71,9 @@ load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #cal
         }
     }
 
-    material := data.materials[primitive.material.?]
-    tex := data.textures[material.metallic_roughness.?.base_color_texture.?.index]
-    img := data.images[tex.source.?]
-    img_view := data.buffer_views[img.buffer_view.?]
-    pixels := data.buffers[img_view.buffer].uri.([]byte)[img_view.byte_offset:img_view.byte_offset+img_view.byte_length]
-    x, y: i32
-    
-    pixels_multiptr := stbi.load_from_memory(
-        raw_data(pixels), 
-        i32(len(pixels)), 
-        &mesh.texture.size.x, 
-        &mesh.texture.size.y, 
-        nil, 4
-    ); if pixels_multiptr == nil do return
-    mesh.texture.pixels = slice.from_ptr(pixels_multiptr, int(x*y))
-
-
     ibo_index  := gltf_mesh.primitives[0].indices.?
     mesh.indices = slice.clone(gltf.buffer_slice(data, ibo_index).([]u16))
 
     ok = true
     return
-}
-
-load_mesh_obj :: proc(path: string, allocator := context.allocator) -> (mesh: Mesh, ok: bool) {
-    context.allocator = allocator
-    context.logger = log.create_console_logger()
-    log.info("Loading:", path)
-    file_data, err := os.read_entire_file_from_path(path, allocator)
-    if err != nil {
-        fmt.printfln("Error reading %v: %v", path, err)
-        return
-    }
-
-    
-    file_str := string(file_data)
-
-    vertices:  [dynamic]Vertex
-    indices:   [dynamic]u16
-
-    i: int
-    for line in strings.split_lines_iterator(&file_str) {
-        if len(line) < 2 do continue
-        defer i += 1
-        switch line[0:2] {
-            case "v ":
-                append(&vertices, Vertex {
-                    pos = parse_vec3(line, 2),
-                    // uv  = {rng.float32_range(0, 1), rng.float32_range(0, 1)},
-                })
-            case "f ":
-                line_ptr := line
-                for s in strings.split_after_iterator(&line_ptr, " ") {
-                    clean, allocs := strings.remove_all(s, " ", context.temp_allocator)
-                    if val, ok := strconv.parse_uint(clean); ok {
-                        append(&indices, u16(val-1))
-                    }
-                }
-                // Correct face orientation
-                slice.swap(indices[:], len(indices)-2, len(indices)-3)
-        }
-    }
-    mesh.vertices = vertices[:]
-    mesh.indices  = indices[:]
-    ok = true
-    return
-}
-
-@(private = "file")
-parse_vec3 :: proc(line: string, start: int) -> vec3 {
-    data: vec3
-    start := start
-    n := 0
-    ok: bool 
-    for i in start..<len(line) {
-        if line[i] == 32 {
-            data[n], ok = strconv.parse_f32(line[start:i]); assert(ok)
-            n += 1
-            start = i+1
-        }
-    }
-    data[n], ok = strconv.parse_f32(line[start:]); assert(ok)
-    return data
 }

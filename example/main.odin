@@ -25,14 +25,14 @@ shader_src := #load("shaders/shaders.hlsl")
 main :: proc() {
     context.logger = log.create_console_logger()
     // Create a window. Debug mode is enabled when compiled with -debug
-    window := rd.create_window("rd window", 1280, 720, ODIN_DEBUG)
+    ok: bool
+    ok = rd.create_window("rd window", 1280, 720, ODIN_DEBUG); assert(ok)
     rd.set_window_mode(.MAXIMIZED)
 
     // Make sure window gets destroyed
     defer rd.destroy_window()
 
     // Create vertex shader
-    ok: bool
     vertex_shader: rd.VertexShader
     vertex_shader, ok = rd.load_vertex_shader(shader_src, "vs_main", Vertex); assert(ok)
 
@@ -52,11 +52,7 @@ main :: proc() {
 
     // Load a mesh
     mesh: Mesh
-    mesh, ok = load_mesh_gltf("example/assets/earth.glb"); assert(ok)
-    
-    // Load and bind a texture
-    base_tex := rd.load_texture(mesh.texture.pixels, u32(mesh.texture.size.x), u32(mesh.texture.size.y))
-    rd.bind(&base_tex)
+    mesh, ok = load_mesh_gltf("example/assets/sphere.glb"); assert(ok)
     
     // Create entities: Sun + planets
     cubes := entities_from_mesh(mesh)
@@ -118,7 +114,7 @@ main :: proc() {
         clamp_camera(&camera)
         if rd.is_lmb_down() do update_camera_from_relative_mouse_stub(&camera) 
         update(&cubes, frame)
-        draw(cubes, orbit_bands, camera, &base_tex, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
+        draw(cubes, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
     }
 }
 
@@ -153,7 +149,6 @@ draw :: proc(
     entities: #soa[]Entity,
     orbit_bands: []OrbitBand,
     camera: Camera, 
-    default_texture: ^rd.Texture,
     pixel_shader: ^rd.PixelShader,
     sun_pixel_shader: ^rd.PixelShader,
     orbit_band_pixel_shader: ^rd.PixelShader,
@@ -194,11 +189,7 @@ draw :: proc(
         }
         ok = rd.bind(&e.vbo)
         ok = rd.bind(&e.ibo)
-        if e.texture_override.view != nil {
-            ok = rd.bind(&e.texture_override)
-        } else {
-            ok = rd.bind(default_texture)
-        }
+        ok = rd.bind(&e.texture)
         model_matrix := linalg.matrix4_from_trs_f32(
             t = e.physics.position, 
             r = e.physics.rotation,
@@ -291,7 +282,7 @@ assign_planet_textures :: proc(entities: ^#soa[]Entity) {
         "example/assets/planet_textures/2k_venus_surface.jpg",
         "example/assets/planet_textures/2k_mercury.jpg",
         "example/assets/planet_textures/2k_venus_atmosphere.jpg",
-        "", // Earth: fallback to mesh/default texture
+        "example/assets/planet_textures/2k_earth.jpg",
         "example/assets/planet_textures/2k_mars.jpg",
         "example/assets/planet_textures/2k_jupiter.jpg",
         "example/assets/planet_textures/2k_saturn.jpg",
@@ -307,7 +298,7 @@ assign_planet_textures :: proc(entities: ^#soa[]Entity) {
             log.warnf("Could not load texture override for entity %v: %v", index, path)
             continue
         }
-        entity.texture_override = texture
+        entity.texture = texture
     }
 }
 
@@ -417,7 +408,7 @@ Entity :: struct {
     physics:          Physics,
     vbo:              rd.VertexBuffer,
     ibo:              rd.IndexBuffer,
-    texture_override: rd.Texture,
+    texture:          rd.Texture,
     orbit_radius:     f32,
     orbit_speed_deg:  f32,
     orbit_angle_deg:  f32,

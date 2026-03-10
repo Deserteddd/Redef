@@ -432,7 +432,7 @@ sd: dxgi.SWAP_CHAIN_DESC
     ); gfx_check(result)
 
     backbuffer: ^d3d.IResource
-    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
+    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, cast(^rawptr)&backbuffer)
     gfx_check(result)
     result = graphics.device->CreateRenderTargetView(backbuffer, nil, &graphics.target)
     gfx_check(result)
@@ -740,7 +740,6 @@ info_manager_log :: proc(loc := #caller_location) {
     end := info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
     ok: dxgi.HRESULT
     for i: u64  = next; i < end; i+=1 {
-        hr: dxgi.HRESULT
         message_length: uint
         ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, nil, &message_length)
 
