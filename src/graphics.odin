@@ -17,9 +17,15 @@ Graphics :: struct {
     ctx:            ^d3d.IDeviceContext,
     target:         ^d3d.IRenderTargetView,
     dsv:            ^d3d.IDepthStencilView,
+    depth_opaque:   ^d3d.IDepthStencilState,
+    depth_blended:  ^d3d.IDepthStencilState,
     rasterizer:     ^d3d.IRasterizerState,
     info_manager:   DXGIInfoManager,
+    blend_mode:     BlendMode,
+    blend_states:   [BlendMode]^d3d.IBlendState, //TODO: release on cleanup
 }
+
+
 
 Texture :: struct {
     width:      u32,
@@ -53,10 +59,51 @@ IndexBuffer :: struct {
     length: u32,
 }
 
+BlendMode :: enum {
+    Alpha,
+    Opaque,
+    Additive
+}
+
+// Return: ok
+set_blend_mode :: proc(mode: BlendMode) -> bool {
+    context.logger = g.logger
+
+    if g.graphics.ctx == nil {
+        log.error("Graphics context is not initialized")
+        return false
+    }
+
+    if g.graphics.blend_mode == mode && g.graphics_init {
+        return true
+    }
+
+    state := g.graphics.blend_states[mode]
+    if state == nil {
+        log.errorf("Blend state for mode %v is not initialized", mode)
+        return false
+    }
+
+    blend_factor := [4]f32{1, 1, 1, 1}
+    info_manager_set()
+    g.graphics.ctx->OMSetBlendState(state, &blend_factor, 0xFFFFFFFF)
+
+    switch mode {
+        case .Opaque:
+            g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_opaque, 1)
+        case .Alpha, .Additive:
+            g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_blended, 1)
+    }
+
+    g.graphics.blend_mode = mode
+    info_manager_log()
+    return true
+}
+
 // Assumes Texture format 
 load_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
     context.logger = g.logger
-    log.debugf("Loading texture: [%v, %v]", width, height, location = loc)
+    log.infof("Loading texture: [%v, %v]", width, height, location = loc)
     ensure(pixels != nil)
     tex_desc: d3d.TEXTURE2D_DESC = {
         Width  = width,
@@ -195,7 +242,7 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
         case typeid_of(Texture):
             tex := cast(^Texture)resource
             g.graphics.ctx->PSSetShaderResources(0, 1, &tex.view)
-            info_manager_log()
+            // info_manager_log()
             g.graphics.ctx->PSSetSamplers(0, 1, &tex.sampler)
         
         // Invalid binds
@@ -408,10 +455,15 @@ sd: dxgi.SWAP_CHAIN_DESC
         DepthFunc      = .LESS
     }
 
-    dss: ^d3d.IDepthStencilState
-    result = graphics.device->CreateDepthStencilState(&ds_desc, &dss)
+    result = graphics.device->CreateDepthStencilState(&ds_desc, &graphics.depth_opaque)
     gfx_check(result)
-    graphics.ctx->OMSetDepthStencilState(dss, 1)
+
+    ds_desc_blended := ds_desc
+    ds_desc_blended.DepthWriteMask = .ZERO
+    result = graphics.device->CreateDepthStencilState(&ds_desc_blended, &graphics.depth_blended)
+    gfx_check(result)
+
+    graphics.ctx->OMSetDepthStencilState(graphics.depth_opaque, 1)
 
     depth_stencil_desc: d3d.TEXTURE2D_DESC = {
         Width  = u32(window.width),
@@ -449,7 +501,68 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     graphics.ctx->RSSetState(graphics.rasterizer)
 
+    render_targets: [8]d3d.RENDER_TARGET_BLEND_DESC
+
+    // Alpha blend (default)
+    render_targets[0] = {
+        BlendEnable     = true,
+        SrcBlend        = .SRC_ALPHA,
+        DestBlend       = .INV_SRC_ALPHA, 
+        BlendOp         = .ADD,
+        SrcBlendAlpha   = .ONE,
+        DestBlendAlpha  = .ZERO,
+        BlendOpAlpha    = .ADD,
+        RenderTargetWriteMask = 0x0F,
+    }
+    blend_desc: d3d.BLEND_DESC = {
+        AlphaToCoverageEnable = false,
+        IndependentBlendEnable = false,
+        RenderTarget = render_targets
+    }
+    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Alpha])
+    gfx_check(result)
+
+    // Opaque
+    render_targets[0] = {
+        BlendEnable     = false,
+        SrcBlend        = .ONE,
+        DestBlend       = .ZERO,
+        BlendOp         = .ADD,
+        SrcBlendAlpha   = .ONE,
+        DestBlendAlpha  = .ZERO,
+        BlendOpAlpha    = .ADD,
+        RenderTargetWriteMask = 0x0F,
+    }
+    blend_desc = d3d.BLEND_DESC {
+        AlphaToCoverageEnable = false,
+        IndependentBlendEnable = false,
+        RenderTarget = render_targets
+    }
+    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Opaque])
+    gfx_check(result)
+
+    // Additive
+    render_targets[0] = {
+        BlendEnable     = true,
+        SrcBlend        = .ONE,
+        DestBlend       = .ONE,
+        BlendOp         = .ADD,
+        SrcBlendAlpha   = .ONE,
+        DestBlendAlpha  = .ZERO,
+        BlendOpAlpha    = .ADD,
+        RenderTargetWriteMask = 0x0F,
+    }
+    blend_desc = d3d.BLEND_DESC {
+        AlphaToCoverageEnable = false,
+        IndependentBlendEnable = false,
+        RenderTarget = render_targets
+    }
+    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Additive])
+    gfx_check(result)
+
+    ok := set_blend_mode(.Opaque)
     graphics_init = true
+    assert(ok)
     log.info("Initialized graphics", location = loc)
 }
 

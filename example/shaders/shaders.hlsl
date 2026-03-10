@@ -58,7 +58,6 @@ struct PointLight {
 cbuffer Lighting {
     PointLight point_light;
 };
-
 float4 ps_main(vs_out input) : SV_Target {
 	const float ambient_strength = 0.12;
     const float specular_strength = 0.35;
@@ -101,4 +100,8 @@ float4 ps_sun(vs_out input) : SV_Target {
     float rim = pow(1.0 - saturate(dot(normal, view_dir)), 2.5);
     float3 glow = albedo * 1.8 + float3(1.0, 0.65, 0.25) * rim * 0.9;
     return float4(saturate(glow), 1.0);
+}
+
+float4 ps_orbit_band(vs_out input) : SV_Target {
+    return float4(1, 1, 1, 0.08);
 }

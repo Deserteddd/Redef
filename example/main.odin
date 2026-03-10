@@ -15,6 +15,7 @@ import rd "../src"
 BACKGROUND :: [4]f32 {0, 0, 0, 0}
 ORBIT_CENTER :: vec3 {0, 0, -120}
 EARTH_ORBIT_SECONDS :: f32(20.0)
+ORBIT_BAND_WIDTH :: f32(0.6)
 
 vec3 :: rd.vec3
 
@@ -42,6 +43,9 @@ main :: proc() {
     sun_pixel_shader: rd.PixelShader
     sun_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_sun"); assert(ok)
 
+    orbit_band_pixel_shader: rd.PixelShader
+    orbit_band_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_orbit_band"); assert(ok)
+
     // Bind shaders
     ok = rd.bind(&vertex_shader); assert(ok)
     ok = rd.bind(&pixel_shader);  assert(ok)
@@ -57,6 +61,7 @@ main :: proc() {
     // Create entities: Sun + planets
     cubes := entities_from_mesh(mesh)
     assign_planet_textures(&cubes)
+    orbit_bands := create_orbit_bands(cubes)
 
     camera := create_orbital_camera()
 
@@ -113,7 +118,7 @@ main :: proc() {
         clamp_camera(&camera)
         if rd.is_lmb_down() do update_camera_from_relative_mouse_stub(&camera) 
         update(&cubes, frame)
-        draw(cubes, camera, &base_tex, &pixel_shader, &sun_pixel_shader)
+        draw(cubes, orbit_bands, camera, &base_tex, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
     }
 }
 
@@ -146,10 +151,12 @@ update :: proc(entitites: ^#soa[]Entity, frame: u32) {
 
 draw :: proc(
     entities: #soa[]Entity,
+    orbit_bands: []OrbitBand,
     camera: Camera, 
     default_texture: ^rd.Texture,
     pixel_shader: ^rd.PixelShader,
-    sun_pixel_shader: ^rd.PixelShader
+    sun_pixel_shader: ^rd.PixelShader,
+    orbit_band_pixel_shader: ^rd.PixelShader,
 ) {
     rd.clear(BACKGROUND)
     ok: bool
@@ -176,6 +183,9 @@ draw :: proc(
     }
     rd.push_constant_data(.Pixel, &lighting_cb, 1)
 
+    ok = rd.set_blend_mode(.Opaque)
+    assert(ok)
+
     for &e, i in entities {
         if i == 0 {
             ok = rd.bind(sun_pixel_shader)
@@ -198,7 +208,82 @@ draw :: proc(
         rd.draw_indexed(e.ibo.length)
     }
 
+    ok = rd.set_blend_mode(.Alpha)
+    assert(ok)
+    ok = rd.bind(orbit_band_pixel_shader)
+    assert(ok)
+
+    for &band in orbit_bands {
+        model_matrix := linalg.matrix4_from_trs_f32(
+                t = ORBIT_CENTER,
+            r = linalg.quaternion_angle_axis_f32(0, vec3{0, 1, 0}),
+            s = vec3{1, 1, 1},
+        )
+        rd.push_constant_data(.Vertex, &model_matrix, 1)
+
+        ok = rd.bind(&band.vbo)
+        ok = rd.bind(&band.ibo)
+        rd.draw_indexed(band.ibo.length)
+    }
+
     rd.frame_end()
+}
+
+create_orbit_bands :: proc(entities: #soa[]Entity, allocator := context.allocator) -> []OrbitBand {
+    bands := make([]OrbitBand, len(entities)-1, allocator)
+    for i in 1..<len(entities) {
+        inner_radius := entities[i].orbit_radius - ORBIT_BAND_WIDTH * 0.5
+        outer_radius := entities[i].orbit_radius + ORBIT_BAND_WIDTH * 0.5
+        vertices, indices := create_ring_geometry(inner_radius, outer_radius, 192, allocator)
+        bands[i-1] = OrbitBand {
+            vbo = rd.create_vertex_buffer(vertices),
+            ibo = rd.create_index_buffer(indices),
+        }
+    }
+    return bands
+}
+
+create_ring_geometry :: proc(inner_radius, outer_radius: f32, segments: int, allocator := context.allocator) -> ([]Vertex, []u16) {
+    vertices := make([dynamic]Vertex, allocator)
+    indices := make([dynamic]u16, allocator)
+    reserve(&vertices, segments * 2)
+    reserve(&indices, segments * 6)
+
+    for i in 0..<segments {
+        t := f32(i) / f32(segments)
+        angle := t * linalg.to_radians(f32(360))
+        s := math.sin(angle)
+        c := math.cos(angle)
+
+        inner := Vertex {
+            pos = {inner_radius * s, 0, inner_radius * c},
+            uv = {t, 0},
+        }
+        outer := Vertex {
+            pos = {outer_radius * s, 0, outer_radius * c},
+            uv = {t, 1},
+        }
+        append(&vertices, inner)
+        append(&vertices, outer)
+    }
+
+    for i in 0..<segments {
+        i0 := u16(i * 2)
+        i1 := u16(i * 2 + 1)
+        next := (i + 1) % segments
+        i2 := u16(next * 2)
+        i3 := u16(next * 2 + 1)
+
+        append(&indices, i0)
+        append(&indices, i3)
+        append(&indices, i1)
+
+        append(&indices, i0)
+        append(&indices, i2)
+        append(&indices, i3)
+    }
+
+    return vertices[:], indices[:]
 }
 
 assign_planet_textures :: proc(entities: ^#soa[]Entity) {
@@ -427,4 +512,9 @@ PointLight :: struct {
 CameraBuffer :: struct {
     camera_pos: rd.vec3,
     _pad0:      f32,
+}
+
+OrbitBand :: struct {
+    vbo:    rd.VertexBuffer,
+    ibo:    rd.IndexBuffer,
 }
