@@ -16,6 +16,12 @@ BACKGROUND :: [4]f32 {0, 0, 0, 0}
 ORBIT_CENTER :: vec3 {0, 0, -120}
 EARTH_ORBIT_SECONDS :: f32(20.0)
 ORBIT_BAND_WIDTH :: f32(0.6)
+ORBIT_DISTANCE_LINEAR_SCALE :: f32(14.0)
+ORBIT_DISTANCE_ROOT_SCALE :: f32(10.0)
+PLANET_RADIUS_LINEAR_SCALE :: f32(0.55)
+PLANET_RADIUS_ROOT_SCALE :: f32(1.35)
+PLANET_RENDER_SCALE :: f32(0.35)
+SUN_RENDER_RADIUS :: f32(24.0)
 
 vec3 :: rd.vec3
 
@@ -60,6 +66,9 @@ main :: proc() {
     orbit_bands := create_orbit_bands(cubes)
 
     camera := create_orbital_camera()
+    selected_body_index := 0
+    camera.target = cubes[selected_body_index].physics.position
+    apply_focus_profile(&camera, cubes[selected_body_index], true)
 
     // Set variables
     running := true
@@ -90,6 +99,12 @@ main :: proc() {
                 // Ctrl+C pressed
                 case rd.KeyboardEvent:
                     if ev.type == .KeyDown || ev.type == .Repeat {
+                        selected_index, ok := body_index_from_key(ev.key)
+                        if ok && selected_index != selected_body_index {
+                            selected_body_index = selected_index
+                            apply_focus_profile(&camera, cubes[selected_body_index], true)
+                        }
+
                         #partial switch ev.key {
                             case .C:
                                 if .CONTROL in ev.mod do running = false
@@ -112,10 +127,54 @@ main :: proc() {
             }
         }
         clamp_camera(&camera)
-        if rd.is_lmb_down() do update_camera_from_relative_mouse_stub(&camera) 
+        if rd.is_lmb_down() do update_camera(&camera) 
         update(&cubes, frame)
+        camera.target = cubes[selected_body_index].physics.position
+        apply_focus_profile(&camera, cubes[selected_body_index])
         draw(cubes, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
     }
+}
+
+body_index_from_key :: proc(key: rd.Keycode) -> (index: int, ok: bool) {
+    #partial switch key {
+        case .NUM0, .NUMPAD0:
+            return 0, true
+        case .NUM1, .NUMPAD1:
+            return 1, true
+        case .NUM2, .NUMPAD2:
+            return 2, true
+        case .NUM3, .NUMPAD3:
+            return 3, true
+        case .NUM4, .NUMPAD4:
+            return 4, true
+        case .NUM5, .NUMPAD5:
+            return 5, true
+        case .NUM6, .NUMPAD6:
+            return 6, true
+        case .NUM7, .NUMPAD7:
+            return 7, true
+        case .NUM8, .NUMPAD8:
+            return 8, true
+    }
+    return 0, false
+}
+
+max_f32 :: proc(a, b: f32) -> f32 {
+    return a > b ? a : b
+}
+
+apply_focus_profile :: proc(camera: ^Camera, entity: Entity, reset_distance := false) {
+    body_radius := entity.physics.scale.x
+    preferred_distance := max_f32(body_radius * 9.0, 8.0)
+    min_distance := max_f32(body_radius * 2.4, 1.75)
+    max_distance := max_f32(preferred_distance * 8.0, entity.orbit_radius + 60.0)
+
+    camera.min_distance = min_distance
+    camera.max_distance = max_distance
+    if reset_distance {
+        camera.distance = preferred_distance
+    }
+    clamp_camera(camera)
 }
 
 update :: proc(entitites: ^#soa[]Entity, frame: u32) {
@@ -123,7 +182,7 @@ update :: proc(entitites: ^#soa[]Entity, frame: u32) {
     dt_seconds := f32(rd.get_dt()) / f32(time.Second)
 
     delta_rotation := linalg.quaternion_angle_axis_f32(
-        linalg.to_radians(f32(22.0) * dt_seconds),
+        linalg.to_radians(f32(50.0) * dt_seconds),
         vec3{0, 1, 0},
     )
 
@@ -174,7 +233,7 @@ draw :: proc(
         attenuation_constant = 1.0,
         attenuation_linear = 0.015,
         attenuation_quadratic = 0.001,
-        _pad0 = 0,
+        
     }
     rd.push_constant_data(.Pixel, &lighting_cb, 1)
 
@@ -279,7 +338,7 @@ create_ring_geometry :: proc(inner_radius, outer_radius: f32, segments: int, all
 
 assign_planet_textures :: proc(entities: ^#soa[]Entity) {
     texture_paths := [9]string {
-        "example/assets/planet_textures/2k_venus_surface.jpg",
+        "example/assets/planet_textures/2k_sun.jpg",
         "example/assets/planet_textures/2k_mercury.jpg",
         "example/assets/planet_textures/2k_venus_atmosphere.jpg",
         "example/assets/planet_textures/2k_earth.jpg",
@@ -346,8 +405,8 @@ create_orbital_camera :: proc() -> Camera {
     return Camera {
         target = {0, 0, -120},
         distance = 180,
-        min_distance = 10,
-        max_distance = 600,
+        min_distance = 6,
+        max_distance = 700,
         yaw = 0,
         pitch = 15,
         min_pitch = -85,
@@ -385,7 +444,7 @@ camera_view_matrix :: proc(camera: Camera) -> linalg.Matrix4f32 {
     return distance_matrix * pitch_matrix * yaw_matrix * target_matrix
 }
 
-update_camera_from_relative_mouse_stub :: proc(camera: ^Camera) {
+update_camera :: proc(camera: ^Camera) {
     mouse_delta := rd.get_relative_mouse_movement()
     camera.yaw -= f32(mouse_delta.x) * camera.mouse_sense
     camera.pitch -= f32(mouse_delta.y) * camera.mouse_sense
@@ -449,21 +508,16 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
         initial_spin_angle := rng.float32_range(0, 360)
         e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), vec3{0, 1, 0})
 
-        radius_earth := body.radius_earth
+        visual_radius := body.radius_earth
         if index == 0 {
-            radius_earth = 18.0
+            visual_radius = SUN_RENDER_RADIUS
         } else {
-            radius_earth = 3.8 * math.sqrt(body.radius_earth)
-            radius_earth = math.clamp(
-                radius_earth,
-                1.8,
-                6.5,
-            )
+            visual_radius = body.radius_earth * PLANET_RADIUS_LINEAR_SCALE + math.sqrt(body.radius_earth) * PLANET_RADIUS_ROOT_SCALE
         }
 
-        uniform_scale := 0.30 * radius_earth
+        uniform_scale := PLANET_RENDER_SCALE * visual_radius
         e.physics.scale = vec3{uniform_scale, uniform_scale, uniform_scale}
-        e.orbit_radius = math.sqrt(body.orbital_radius_au) * 22.0
+        e.orbit_radius = body.orbital_radius_au * ORBIT_DISTANCE_LINEAR_SCALE + math.sqrt(body.orbital_radius_au) * ORBIT_DISTANCE_ROOT_SCALE
         e.orbit_angle_deg = index == 0 ? 0 : rng.float32_range(0, 360)
 
         if index == 0 {

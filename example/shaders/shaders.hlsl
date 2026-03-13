@@ -58,17 +58,8 @@ struct PointLight {
 cbuffer Lighting {
     PointLight point_light;
 };
-float4 ps_main(vs_out input) : SV_Target {
-	const float ambient_strength = 0.12;
-    const float specular_strength = 0.35;
-    const float shininess = 32.0;
 
-	float3 albedo = tex.Sample(splr, input.uv).rgb;
-    float3 normal = normalize(input.normal);
-    float3 to_light = point_light.position - input.world_pos;
-    float distance_to_light = length(to_light);
-    float3 light_dir = distance_to_light > 0.0001 ? (to_light / distance_to_light) : float3(0, 0, 0);
-
+float compute_attenuation(float distance_to_light) {
     float attenuation = 1.0 / max(
         point_light.attenuation_constant + point_light.attenuation_linear * distance_to_light + point_light.attenuation_quadratic * distance_to_light * distance_to_light,
         0.0001
@@ -76,15 +67,34 @@ float4 ps_main(vs_out input) : SV_Target {
     if (point_light.range > 0.0) {
         attenuation *= saturate(1.0 - distance_to_light / point_light.range);
     }
-    attenuation *= point_light.intensity;
+    return attenuation * point_light.intensity;
+}
 
-    float ndotl = max(dot(normal, light_dir), 0.0);
-    float3 diffuse = ndotl * point_light.color * albedo;
+float4 ps_main(vs_out input) : SV_Target {
+	const float ambient_strength = 0.08;
+    const float diffuse_wrap = 0.08;
+    const float specular_strength = 0.04;
+    const float shininess = 96.0;
+
+	float3 albedo = tex.Sample(splr, input.uv).rgb;
+    float3 normal = normalize(input.normal);
+    float3 to_light = point_light.position - input.world_pos;
+    float distance_to_light = length(to_light);
+    float3 light_dir = distance_to_light > 0.0001 ? (to_light / distance_to_light) : float3(0, 0, 0);
+
+    float attenuation = compute_attenuation(distance_to_light);
+
+    float ndotl = saturate(dot(normal, light_dir));
+    float wrapped_ndotl = saturate((ndotl + diffuse_wrap) / (1.0 + diffuse_wrap));
+    float3 diffuse = wrapped_ndotl * point_light.color * albedo;
 
     float3 view_dir = normalize(camera_pos - input.world_pos);
+    float ndotv = saturate(dot(normal, view_dir));
     float3 half_dir = normalize(light_dir + view_dir);
-    float spec = ndotl > 0.0 ? pow(max(dot(normal, half_dir), 0.0), max(shininess, 1.0)) : 0.0;
-    float3 specular = specular_strength * spec * point_light.color;
+    float spec = (ndotl > 0.0 && ndotv > 0.0) ? pow(saturate(dot(normal, half_dir)), shininess) : 0.0;
+    spec *= ndotl * ndotv;
+    float3 dielectric_f0 = float3(0.02, 0.02, 0.02);
+    float3 specular = specular_strength * spec * dielectric_f0 * point_light.color;
 
     float3 ambient = ambient_strength * albedo;
     float3 color = ambient + attenuation * (diffuse + specular);

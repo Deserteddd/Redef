@@ -260,14 +260,14 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
     return
 }
 
-push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32) { 
+push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #caller_location) { 
     context.logger = g.logger
     ensure(data != nil)
 
     size: u32 = size_of(data^)
     mod := size % 16
 
-    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size)
+    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size, location = loc)
     size = size + mod
     if size < 96 do size = 96
     cb_desc := d3d.BUFFER_DESC{
