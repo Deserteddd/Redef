@@ -22,6 +22,8 @@ PLANET_RADIUS_LINEAR_SCALE :: f32(0.55)
 PLANET_RADIUS_ROOT_SCALE :: f32(1.35)
 PLANET_RENDER_SCALE :: f32(0.35)
 SUN_RENDER_RADIUS :: f32(24.0)
+EARTH_INDEX :: int(3)
+EARTH_AXIAL_TILT_DEG :: f32(23.44)
 
 vec3 :: rd.vec3
 
@@ -61,14 +63,14 @@ main :: proc() {
     mesh, ok = load_mesh_gltf("example/assets/sphere.glb"); assert(ok)
     
     // Create entities: Sun + planets
-    cubes := entities_from_mesh(mesh)
-    assign_planet_textures(&cubes)
-    orbit_bands := create_orbit_bands(cubes)
+    bodies := bodies_from_mesh(mesh)
+    assign_planet_textures(&bodies)
+    orbit_bands := create_orbit_bands(bodies)
 
     camera := create_orbital_camera()
     selected_body_index := 0
-    camera.target = cubes[selected_body_index].physics.position
-    apply_focus_profile(&camera, cubes[selected_body_index], true)
+    camera.target = bodies[selected_body_index].position
+    apply_focus_profile(&camera, bodies[selected_body_index], true)
 
     // Set variables
     running := true
@@ -102,7 +104,7 @@ main :: proc() {
                         selected_index, ok := body_index_from_key(ev.key)
                         if ok && selected_index != selected_body_index {
                             selected_body_index = selected_index
-                            apply_focus_profile(&camera, cubes[selected_body_index], true)
+                            apply_focus_profile(&camera, bodies[selected_body_index], true)
                         }
 
                         #partial switch ev.key {
@@ -128,10 +130,10 @@ main :: proc() {
         }
         clamp_camera(&camera)
         if rd.is_lmb_down() do update_camera(&camera) 
-        update(&cubes, frame)
-        camera.target = cubes[selected_body_index].physics.position
-        apply_focus_profile(&camera, cubes[selected_body_index])
-        draw(cubes, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
+        update(&bodies, frame)
+        camera.target = bodies[selected_body_index].position
+        apply_focus_profile(&camera, bodies[selected_body_index])
+        draw(bodies, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
     }
 }
 
@@ -163,11 +165,11 @@ max_f32 :: proc(a, b: f32) -> f32 {
     return a > b ? a : b
 }
 
-apply_focus_profile :: proc(camera: ^Camera, entity: Entity, reset_distance := false) {
-    body_radius := entity.physics.scale.x
+apply_focus_profile :: proc(camera: ^Camera, body: Body, reset_distance := false) {
+    body_radius := body.scale.x
     preferred_distance := max_f32(body_radius * 9.0, 8.0)
     min_distance := max_f32(body_radius * 2.4, 1.75)
-    max_distance := max_f32(preferred_distance * 8.0, entity.orbit_radius + 60.0)
+    max_distance := max_f32(preferred_distance * 8.0, body.orbit_radius + 60.0)
 
     camera.min_distance = min_distance
     camera.max_distance = max_distance
@@ -177,35 +179,35 @@ apply_focus_profile :: proc(camera: ^Camera, entity: Entity, reset_distance := f
     clamp_camera(camera)
 }
 
-update :: proc(entitites: ^#soa[]Entity, frame: u32) {
+update :: proc(entitites: ^#soa[]Body, frame: u32) {
     _ = frame
     dt_seconds := f32(rd.get_dt()) / f32(time.Second)
+    spin_delta_deg := f32(50.0) * dt_seconds
 
-    delta_rotation := linalg.quaternion_angle_axis_f32(
-        linalg.to_radians(f32(50.0) * dt_seconds),
-        vec3{0, 1, 0},
-    )
-
-    for &e, i in entitites {
+    for &b, i in entitites {
         if i > 0 {
-            e.orbit_angle_deg += e.orbit_speed_deg * dt_seconds
-            if e.orbit_angle_deg >= 360.0 {
-                e.orbit_angle_deg -= 360.0
+            b.orbit_angle_deg += b.orbit_speed_deg * dt_seconds
+            if b.orbit_angle_deg >= 360.0 {
+                b.orbit_angle_deg -= 360.0
             }
 
-            orbit_radians := linalg.to_radians(e.orbit_angle_deg)
-            e.physics.position = ORBIT_CENTER + vec3 {
-                e.orbit_radius * math.sin(orbit_radians),
+            orbit_radians := linalg.to_radians(b.orbit_angle_deg)
+            b.position = ORBIT_CENTER + vec3 {
+                b.orbit_radius * math.sin(orbit_radians),
                 0,
-                e.orbit_radius * math.cos(orbit_radians),
+                b.orbit_radius * math.cos(orbit_radians),
             }
         }
-        e.physics.rotation = delta_rotation * e.physics.rotation
+        delta_rotation := linalg.quaternion_angle_axis_f32(
+            linalg.to_radians(spin_delta_deg),
+            b.spin_axis,
+        )
+        b.rotation = delta_rotation * b.rotation
     }
 }
 
 draw :: proc(
-    entities: #soa[]Entity,
+    bodies: #soa[]Body,
     orbit_bands: []OrbitBand,
     camera: Camera, 
     pixel_shader: ^rd.PixelShader,
@@ -240,22 +242,22 @@ draw :: proc(
     ok = rd.set_blend_mode(.Opaque)
     assert(ok)
 
-    for &e, i in entities {
+    for &b, i in bodies {
         if i == 0 {
             ok = rd.bind(sun_pixel_shader)
         } else {
             ok = rd.bind(pixel_shader)
         }
-        ok = rd.bind(&e.vbo)
-        ok = rd.bind(&e.ibo)
-        ok = rd.bind(&e.texture)
+        ok = rd.bind(&b.vbo)
+        ok = rd.bind(&b.ibo)
+        ok = rd.bind(&b.texture)
         model_matrix := linalg.matrix4_from_trs_f32(
-            t = e.physics.position, 
-            r = e.physics.rotation,
-            s = e.physics.scale
+            t = b.position, 
+            r = b.rotation,
+            s = b.scale
         )
         rd.push_constant_data(.Vertex, &model_matrix, 1)
-        rd.draw_indexed(e.ibo.length)
+        rd.draw_indexed(b.ibo.length)
     }
 
     ok = rd.set_blend_mode(.Alpha)
@@ -279,11 +281,11 @@ draw :: proc(
     rd.frame_end()
 }
 
-create_orbit_bands :: proc(entities: #soa[]Entity, allocator := context.allocator) -> []OrbitBand {
-    bands := make([]OrbitBand, len(entities)-1, allocator)
-    for i in 1..<len(entities) {
-        inner_radius := entities[i].orbit_radius - ORBIT_BAND_WIDTH * 0.5
-        outer_radius := entities[i].orbit_radius + ORBIT_BAND_WIDTH * 0.5
+create_orbit_bands :: proc(bodies: #soa[]Body, allocator := context.allocator) -> []OrbitBand {
+    bands := make([]OrbitBand, len(bodies)-1, allocator)
+    for i in 1..<len(bodies) {
+        inner_radius := bodies[i].orbit_radius - ORBIT_BAND_WIDTH * 0.5
+        outer_radius := bodies[i].orbit_radius + ORBIT_BAND_WIDTH * 0.5
         vertices, indices := create_ring_geometry(inner_radius, outer_radius, 192, allocator)
         bands[i-1] = OrbitBand {
             vbo = rd.create_vertex_buffer(vertices),
@@ -336,7 +338,7 @@ create_ring_geometry :: proc(inner_radius, outer_radius: f32, segments: int, all
     return vertices[:], indices[:]
 }
 
-assign_planet_textures :: proc(entities: ^#soa[]Entity) {
+assign_planet_textures :: proc(entities: ^#soa[]Body) {
     texture_paths := [9]string {
         "example/assets/planet_textures/2k_sun.jpg",
         "example/assets/planet_textures/2k_mercury.jpg",
@@ -463,23 +465,20 @@ create_proj_matrix :: proc() -> linalg.Matrix4f32 {
     )
 }
 
-Entity :: struct {
-    physics:          Physics,
+Body :: struct {
     vbo:              rd.VertexBuffer,
     ibo:              rd.IndexBuffer,
     texture:          rd.Texture,
     orbit_radius:     f32,
     orbit_speed_deg:  f32,
     orbit_angle_deg:  f32,
+    position:         vec3,
+    rotation:         quaternion128,
+    spin_axis:        vec3,
+    scale:            vec3,
 }
 
-Physics :: struct {
-    position:   vec3,
-    rotation:   quaternion128,
-    scale:      vec3,
-}
-
-entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]Entity {
+bodies_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]Body {
     PlanetDef :: struct {
         orbital_radius_au: f32,
         radius_earth:      f32,
@@ -501,12 +500,22 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
     total := len(bodies)
     vbo := rd.create_vertex_buffer(mesh.vertices)
     ibo := rd.create_index_buffer(mesh.indices)
-    entities := make_soa(#soa[]Entity, total, allocator = allocator)
+    entities := make_soa(#soa[]Body, total, allocator = allocator)
 
     for &e, index in entities {
         body := bodies[index]
+        e.spin_axis = vec3{0, 1, 0}
         initial_spin_angle := rng.float32_range(0, 360)
-        e.physics.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), vec3{0, 1, 0})
+        e.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), e.spin_axis)
+
+        if index == EARTH_INDEX {
+            // Earth's axis is tilted 23.44 degrees relative to the orbital plane normal.
+            tilt := linalg.quaternion_angle_axis_f32(linalg.to_radians(-EARTH_AXIAL_TILT_DEG), vec3{1, 0, 0})
+            tilt_axis_y := math.cos(linalg.to_radians(EARTH_AXIAL_TILT_DEG))
+            tilt_axis_z := -math.sin(linalg.to_radians(EARTH_AXIAL_TILT_DEG))
+            e.spin_axis = vec3{0, tilt_axis_y, tilt_axis_z}
+            e.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), e.spin_axis) * tilt
+        }
 
         visual_radius := body.radius_earth
         if index == 0 {
@@ -516,7 +525,7 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
         }
 
         uniform_scale := PLANET_RENDER_SCALE * visual_radius
-        e.physics.scale = vec3{uniform_scale, uniform_scale, uniform_scale}
+        e.scale = vec3{uniform_scale, uniform_scale, uniform_scale}
         e.orbit_radius = body.orbital_radius_au * ORBIT_DISTANCE_LINEAR_SCALE + math.sqrt(body.orbital_radius_au) * ORBIT_DISTANCE_ROOT_SCALE
         e.orbit_angle_deg = index == 0 ? 0 : rng.float32_range(0, 360)
 
@@ -532,7 +541,7 @@ entities_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]
         }
 
         angle_radians := linalg.to_radians(e.orbit_angle_deg)
-        e.physics.position = ORBIT_CENTER + vec3 {
+        e.position = ORBIT_CENTER + vec3 {
             e.orbit_radius * math.sin(angle_radians),
             0,
             e.orbit_radius * math.cos(angle_radians),
