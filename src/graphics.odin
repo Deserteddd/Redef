@@ -9,6 +9,7 @@ import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
 import win "core:sys/windows"
+import "core:math/linalg"
 
 @(private = "package")
 Graphics :: struct {
@@ -63,6 +64,14 @@ BlendMode :: enum {
     Alpha,
     Opaque,
     Additive
+}
+
+destroy :: proc{
+    destroy_index_buffer,
+    destroy_vertex_buffer,
+    destroy_texture,
+    destroy_pixel_shader,
+    destroy_vertex_shader,
 }
 
 // Return: ok
@@ -151,6 +160,12 @@ load_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location
     }
 }
 
+destroy_texture :: proc(t: Texture) {
+    t.view->Release()
+    t.sampler->Release()
+    t.tex->Release()
+}
+
 create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
     context.logger = g.logger
     ensure(indices != nil)
@@ -177,6 +192,8 @@ create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
         length = u32(len(indices))
     }
 }
+
+destroy_index_buffer :: proc(ib: IndexBuffer) {ib.buf->Release()}
 
 create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
     context.logger = g.logger
@@ -205,6 +222,8 @@ create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
         0
     }
 }
+
+destroy_vertex_buffer :: proc(vb: VertexBuffer) { vb.buf->Release() }
 
 /*
 Binds a generic resource to the active pipeline
@@ -383,6 +402,11 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
     }, true
 }
 
+destroy_vertex_shader :: proc(vs: VertexShader) {
+    vs.layout->Release()
+    vs.shader->Release()
+}
+
 load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_location) -> (PixelShader, bool) {
     context.logger = g.logger
     entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
@@ -400,6 +424,8 @@ load_pixel_shader :: proc(code: []byte, entry_point: string, loc := #caller_loca
     gfx_check(ok)
     return pixel_shader, true
 }
+
+destroy_pixel_shader :: proc(ps: PixelShader) { ps->Release() }
 
 @(private = "package")
 init_graphics :: proc(debug: bool, loc := #caller_location) {

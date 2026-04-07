@@ -25,8 +25,6 @@ SUN_RENDER_RADIUS :: f32(24.0)
 EARTH_INDEX :: int(3)
 EARTH_AXIAL_TILT_DEG :: f32(23.44)
 
-vec3 :: rd.vec3
-
 
 shader_src := #load("shaders/shaders.hlsl")
 
@@ -35,7 +33,6 @@ main :: proc() {
     // Create a window. Debug mode is enabled when compiled with -debug
     ok: bool
     ok = rd.create_window("rd window", 1280, 720, ODIN_DEBUG); assert(ok)
-    rd.set_window_mode(.MAXIMIZED)
 
     // Make sure window gets destroyed
     defer rd.destroy_window()
@@ -43,16 +40,20 @@ main :: proc() {
     // Create vertex shader
     vertex_shader: rd.VertexShader
     vertex_shader, ok = rd.load_vertex_shader(shader_src, "vs_main", Vertex); assert(ok)
+    defer rd.destroy(vertex_shader)
 
     // Create pixel shader
     pixel_shader: rd.PixelShader
     pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_main"); assert(ok)
+    defer rd.destroy(pixel_shader)
 
     sun_pixel_shader: rd.PixelShader
     sun_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_sun"); assert(ok)
+    defer rd.destroy(sun_pixel_shader)
 
     orbit_band_pixel_shader: rd.PixelShader
     orbit_band_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_orbit_band"); assert(ok)
+    defer rd.destroy(sun_pixel_shader)
 
     // Bind shaders
     ok = rd.bind(&vertex_shader); assert(ok)
@@ -61,11 +62,13 @@ main :: proc() {
     // Load a mesh
     mesh: Mesh
     mesh, ok = load_mesh_gltf("example/assets/sphere.glb"); assert(ok)
+    defer destroy_mesh_gltf(mesh)
     
     // Create entities: Sun + planets
     bodies := bodies_from_mesh(mesh)
     assign_planet_textures(&bodies)
     orbit_bands := create_orbit_bands(bodies)
+    defer delete(orbit_bands)
 
     camera := create_orbital_camera()
     selected_body_index := 0
@@ -134,6 +137,12 @@ main :: proc() {
         camera.target = bodies[selected_body_index].position
         apply_focus_profile(&camera, bodies[selected_body_index])
         draw(bodies, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
+    }
+
+    for body in bodies {
+        rd.destroy(body.ibo)
+        rd.destroy(body.ibo)
+        rd.destroy(body.texture)
     }
 }
 
