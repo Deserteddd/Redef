@@ -9,7 +9,6 @@ import d3d "vendor:directx/d3d11"
 import d3dc "vendor:directx/d3d_compiler"
 import dxgi "vendor:directx/dxgi"
 import win "core:sys/windows"
-import "core:math/linalg"
 
 @(private = "package")
 Graphics :: struct {
@@ -261,7 +260,6 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
         case typeid_of(Texture):
             tex := cast(^Texture)resource
             g.graphics.ctx->PSSetShaderResources(0, 1, &tex.view)
-            // info_manager_log()
             g.graphics.ctx->PSSetSamplers(0, 1, &tex.sampler)
         
         // Invalid binds
@@ -315,12 +313,12 @@ push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #cal
     info_manager_log()
 }
 
-draw_indexed :: proc(indices: u32) {
+draw_indexed :: proc(indices: u32, loc := #caller_location) {
     context.logger = g.logger
 
     info_manager_set()
     g.graphics.ctx->DrawIndexed(indices, 0, 0)
-    info_manager_log()
+    info_manager_log(loc = loc)
 }
 
 
@@ -352,7 +350,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
 
     err := d3dc.Compile(
         raw_data(code), 
-        len(code), nil, nil, nil,
+        len(code), "<Shader input file>", nil, nil,
         entry_point_cstr, 
         "vs_5_0", 0, 0, 
         &vs_blob, 
@@ -431,17 +429,15 @@ destroy_pixel_shader :: proc(ps: PixelShader) { ps->Release() }
 init_graphics :: proc(debug: bool, loc := #caller_location) {
 sd: dxgi.SWAP_CHAIN_DESC
     {
-        using sd
-        BufferDesc.Format = .B8G8R8A8_UNORM
-        SampleDesc.Count = 1
-        BufferUsage = {.RENDER_TARGET_OUTPUT}
-        BufferCount = 1
-        OutputWindow = cast(dxgi.HWND)g.window.handle
-        Windowed = true
-        SwapEffect = .DISCARD
+        sd.BufferDesc.Format = .B8G8R8A8_UNORM
+        sd.SampleDesc.Count = 1
+        sd.BufferUsage = {.RENDER_TARGET_OUTPUT}
+        sd.BufferCount = 1
+        sd.OutputWindow = cast(dxgi.HWND)g.window.handle
+        sd.Windowed = true
+        sd.SwapEffect = .DISCARD
     }
 
-    using g
     // Initilaize graphics
     creation_flags: d3d.CREATE_DEVICE_FLAGS = debug ? {.DEBUG} : {}
 
@@ -451,16 +447,16 @@ sd: dxgi.SWAP_CHAIN_DESC
         nil, creation_flags, nil, 0,
         d3d.SDK_VERSION,
         &sd,
-        &graphics.swapchain,
-        &graphics.device,
+        &g.graphics.swapchain,
+        &g.graphics.device,
         nil,
-        &graphics.ctx
+        &g.graphics.ctx
     ); gfx_check(result)
 
     backbuffer: ^d3d.IResource
-    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, cast(^rawptr)&backbuffer)
+    result = g.graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, cast(^rawptr)&backbuffer)
     gfx_check(result)
-    result = graphics.device->CreateRenderTargetView(backbuffer, nil, &graphics.target)
+    result = g.graphics.device->CreateRenderTargetView(backbuffer, nil, &g.graphics.target)
     gfx_check(result)
     backbuffer->Release()
 
@@ -469,11 +465,11 @@ sd: dxgi.SWAP_CHAIN_DESC
     info_manager_set()
     viewport := d3d.VIEWPORT{
         0, 0,
-        f32(window.width), f32(window.height),
+        f32(g.window.width), f32(g.window.height),
         0, 1,
     }
     
-    graphics.ctx->RSSetViewports(1, &viewport) 
+    g.graphics.ctx->RSSetViewports(1, &viewport) 
 
     ds_desc: d3d.DEPTH_STENCIL_DESC = {
         DepthEnable    = true,
@@ -481,19 +477,19 @@ sd: dxgi.SWAP_CHAIN_DESC
         DepthFunc      = .LESS
     }
 
-    result = graphics.device->CreateDepthStencilState(&ds_desc, &graphics.depth_opaque)
+    result = g.graphics.device->CreateDepthStencilState(&ds_desc, &g.graphics.depth_opaque)
     gfx_check(result)
 
     ds_desc_blended := ds_desc
     ds_desc_blended.DepthWriteMask = .ZERO
-    result = graphics.device->CreateDepthStencilState(&ds_desc_blended, &graphics.depth_blended)
+    result = g.graphics.device->CreateDepthStencilState(&ds_desc_blended, &g.graphics.depth_blended)
     gfx_check(result)
 
-    graphics.ctx->OMSetDepthStencilState(graphics.depth_opaque, 1)
+    g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_opaque, 1)
 
     depth_stencil_desc: d3d.TEXTURE2D_DESC = {
-        Width  = u32(window.width),
-        Height = u32(window.height),
+        Width  = u32(g.window.width),
+        Height = u32(g.window.height),
         MipLevels = 1,
         ArraySize = 1,
         Format = .D32_FLOAT,
@@ -504,17 +500,17 @@ sd: dxgi.SWAP_CHAIN_DESC
         BindFlags = {.DEPTH_STENCIL}
     }
     depth_stencil: ^d3d.ITexture2D
-    result = graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
+    result = g.graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
     gfx_check(result)
 
     dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
         Format = .D32_FLOAT,
         ViewDimension = .TEXTURE2D,
     }
-    result = graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &graphics.dsv)
+    result = g.graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &g.graphics.dsv)
     gfx_check(result)
 
-    graphics.ctx->OMSetRenderTargets(1, &graphics.target, graphics.dsv)
+    g.graphics.ctx->OMSetRenderTargets(1, &g.graphics.target, g.graphics.dsv)
     info_manager_log()
 
     rasterizer_desc: d3d.RASTERIZER_DESC = {
@@ -522,10 +518,10 @@ sd: dxgi.SWAP_CHAIN_DESC
         CullMode = .NONE
     }
 
-    result = graphics.device->CreateRasterizerState(&rasterizer_desc, &graphics.rasterizer)
+    result = g.graphics.device->CreateRasterizerState(&rasterizer_desc, &g.graphics.rasterizer)
     gfx_check(result)
 
-    graphics.ctx->RSSetState(graphics.rasterizer)
+    g.graphics.ctx->RSSetState(g.graphics.rasterizer)
 
     render_targets: [8]d3d.RENDER_TARGET_BLEND_DESC
 
@@ -545,7 +541,7 @@ sd: dxgi.SWAP_CHAIN_DESC
         IndependentBlendEnable = false,
         RenderTarget = render_targets
     }
-    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Alpha])
+    result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Alpha])
     gfx_check(result)
 
     // Opaque
@@ -564,7 +560,7 @@ sd: dxgi.SWAP_CHAIN_DESC
         IndependentBlendEnable = false,
         RenderTarget = render_targets
     }
-    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Opaque])
+    result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Opaque])
     gfx_check(result)
 
     // Additive
@@ -583,11 +579,11 @@ sd: dxgi.SWAP_CHAIN_DESC
         IndependentBlendEnable = false,
         RenderTarget = render_targets
     }
-    result = graphics.device->CreateBlendState(&blend_desc, &graphics.blend_states[.Additive])
+    result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Additive])
     gfx_check(result)
 
     ok := set_blend_mode(.Opaque)
-    graphics_init = true
+    g.graphics_init = true
     assert(ok)
     log.info("Initialized graphics", location = loc)
 }
@@ -601,25 +597,24 @@ resize_graphics :: proc() {
 
     if width <= 0 || height <= 0 do return
 
-    using g
     info_manager_set()
 
-    graphics.ctx->OMSetRenderTargets(0, nil, nil)
+    g.graphics.ctx->OMSetRenderTargets(0, nil, nil)
     info_manager_log()
 
-    if graphics.target != nil {
-        rc := graphics.target->Release()
+    if g.graphics.target != nil {
+        rc := g.graphics.target->Release()
         assert(rc == 0)
-        graphics.target = nil
+        g.graphics.target = nil
     }
 
-    if graphics.dsv != nil {
-        rc := graphics.dsv->Release()
+    if g.graphics.dsv != nil {
+        rc := g.graphics.dsv->Release()
         assert(rc == 0)
-        graphics.dsv = nil
+        g.graphics.dsv = nil
     }
 
-    result := graphics.swapchain->ResizeBuffers(
+    result := g.graphics.swapchain->ResizeBuffers(
         0,
         u32(width),
         u32(height),
@@ -629,10 +624,11 @@ resize_graphics :: proc() {
     gfx_check(result)
 
     backbuffer: ^d3d.IResource
-    result = graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
+    result = g.graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, transmute(^rawptr)&backbuffer)
     gfx_check(result)
 
-    result = graphics.device->CreateRenderTargetView(backbuffer, nil, &graphics.target)
+    result = g.graphics.device->CreateRenderTargetView(backbuffer, nil, &g.graphics.target)
+
     gfx_check(result)
     rc := backbuffer->Release()
     assert(rc == 0)
@@ -651,27 +647,27 @@ resize_graphics :: proc() {
     }
 
     depth_stencil: ^d3d.ITexture2D
-    result = graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
+    result = g.graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
     gfx_check(result)
 
     dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
         Format = .D32_FLOAT,
         ViewDimension = .TEXTURE2D,
     }
-    result = graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &graphics.dsv)
+    result = g.graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &g.graphics.dsv)
     gfx_check(result)
 
     rc = depth_stencil->Release()
     assert(rc == 0)
 
-    graphics.ctx->OMSetRenderTargets(1, &graphics.target, graphics.dsv)
+    g.graphics.ctx->OMSetRenderTargets(1, &g.graphics.target, g.graphics.dsv)
 
     viewport := d3d.VIEWPORT{
         0, 0,
         f32(width), f32(height),
         0, 1,
     }
-    graphics.ctx->RSSetViewports(1, &viewport)
+    g.graphics.ctx->RSSetViewports(1, &viewport)
     info_manager_log()
 }
 
@@ -722,34 +718,29 @@ print_shader_compilation_message :: proc(blob: ^d3d.IBlob, level: log.Level = .I
 
 @(private = "package")
 destroy_graphics :: proc(loc := #caller_location) {
-    using g.graphics
 
-    assert(device != nil)
-    assert(swapchain != nil)
-    assert(ctx != nil)
-    device->Release()
-    swapchain->Release()
-    ctx->Release()
+    assert(g.graphics.device != nil)
+    assert(g.graphics.swapchain != nil)
+    assert(g.graphics.ctx != nil)
+    g.graphics.device->Release()
+    g.graphics.swapchain->Release()
+    g.graphics.ctx->Release()
 
-    info_manager.info_queue->Release()
+    g.graphics.info_manager.info_queue->Release()
 
     log.info("Destroyed graphics subsystem", location = loc)
 }
 
 @(private = "file")
 gfx_check :: proc(hresult: dxgi.HRESULT, error: string = "None", loc := #caller_location) {
-    when !ODIN_DEBUG {
-        ensure(hresult == 0, loc = loc)
-    } else {
-        if hresult != 0 {
-            if _, ok := fmt.enum_value_to_string(DXGIError(hresult)); !ok {
-                log.errorf("Generic Error 0x%x: %v", u32(hresult), error, location = loc)
-            } else {
-                log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
-            }
-            info_manager_log(loc = loc)
-            runtime.trap()
+    if hresult != 0 {
+        if _, ok := fmt.enum_value_to_string(DXGIError(hresult)); !ok {
+            log.errorf("Generic Error 0x%x: %v", u32(hresult), error, location = loc)
+        } else {
+            log.errorf("DXGI Error 0x%x: %v", u32(hresult), DXGIError(hresult), location = loc)
         }
+        info_manager_log(loc = loc)
+        runtime.trap()
     }
 }
 
@@ -762,16 +753,16 @@ DXGIInfoManager :: struct {
 
 @(private = "file")
 info_manager_log :: proc(loc := #caller_location) {
-    using g.graphics.info_manager
-    end := info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
+    im := g.graphics.info_manager
+    end := im.info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
     ok: dxgi.HRESULT
-    for i: u64  = next; i < end; i+=1 {
+    for i: u64  = im.next; i < end; i+=1 {
         message_length: uint
-        ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, nil, &message_length)
+        ok = im.info_queue->GetMessage(dxgi.DEBUG_ALL, i, nil, &message_length)
 
         message := new(dxgi.INFO_QUEUE_MESSAGE) 
         defer free(message)
-        ok = info_queue->GetMessage(dxgi.DEBUG_ALL, i, message, &message_length)
+        ok = im.info_queue->GetMessage(dxgi.DEBUG_ALL, i, message, &message_length)
         gfx_check(ok)
         message_string := strings.string_from_null_terminated_ptr(message.pDescription, int(message_length))
         log.errorf("%v", message_string, location = loc)
@@ -780,8 +771,7 @@ info_manager_log :: proc(loc := #caller_location) {
 
 @(private = "file")
 info_manager_set :: proc() {
-    using g.graphics.info_manager
-    next = info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
+    g.graphics.info_manager.next = g.graphics.info_manager.info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
 }
 
 @(private = "file")

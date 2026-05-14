@@ -103,7 +103,7 @@ create_window :: proc (name: string, width, height: i32, debug: bool, loc := #ca
     g.window.width = width
     g.window.height = height
     g.window.name = name
-    init_windows_window()
+    if ok := init_windows_window(); !ok do return false
 
     log.infof("Window '%v' created [handle: %v]", string_to_cstring16(g.window.name), g.window.handle, location = loc)
 

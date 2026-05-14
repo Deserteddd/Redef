@@ -4,10 +4,10 @@ import "core:fmt"
 import "core:log"
 import "core:math"
 import "core:time"
-import os "core:os/os2"
+import "core:os"
 import "core:slice"
 import "base:runtime"
-import "core:math/linalg"
+import lg "core:math/linalg"
 import rng "core:math/rand"
 import stbi "vendor:stb/image"
 import rd "../src"
@@ -53,11 +53,10 @@ main :: proc() {
 
     orbit_band_pixel_shader: rd.PixelShader
     orbit_band_pixel_shader, ok = rd.load_pixel_shader(shader_src, "ps_orbit_band"); assert(ok)
-    defer rd.destroy(sun_pixel_shader)
+    defer rd.destroy(orbit_band_pixel_shader)
 
     // Bind shaders
     ok = rd.bind(&vertex_shader); assert(ok)
-    ok = rd.bind(&pixel_shader);  assert(ok)
 
     // Load a mesh
     mesh: Mesh
@@ -66,6 +65,12 @@ main :: proc() {
     
     // Create entities: Sun + planets
     bodies := bodies_from_mesh(mesh)
+    defer {
+        rd.destroy(bodies[0].ibo)
+        rd.destroy(bodies[0].vbo)
+        rd.destroy(bodies[0].texture)
+    }
+
     assign_planet_textures(&bodies)
     orbit_bands := create_orbit_bands(bodies)
     defer delete(orbit_bands)
@@ -139,11 +144,7 @@ main :: proc() {
         draw(bodies, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
     }
 
-    for body in bodies {
-        rd.destroy(body.ibo)
-        rd.destroy(body.ibo)
-        rd.destroy(body.texture)
-    }
+    delete_soa(bodies)
 }
 
 body_index_from_key :: proc(key: rd.Keycode) -> (index: int, ok: bool) {
@@ -200,15 +201,15 @@ update :: proc(entitites: ^#soa[]Body, frame: u32) {
                 b.orbit_angle_deg -= 360.0
             }
 
-            orbit_radians := linalg.to_radians(b.orbit_angle_deg)
+            orbit_radians := lg.to_radians(b.orbit_angle_deg)
             b.position = ORBIT_CENTER + vec3 {
                 b.orbit_radius * math.sin(orbit_radians),
                 0,
                 b.orbit_radius * math.cos(orbit_radians),
             }
         }
-        delta_rotation := linalg.quaternion_angle_axis_f32(
-            linalg.to_radians(spin_delta_deg),
+        delta_rotation := lg.quaternion_angle_axis_f32(
+            lg.to_radians(spin_delta_deg),
             b.spin_axis,
         )
         b.rotation = delta_rotation * b.rotation
@@ -260,7 +261,7 @@ draw :: proc(
         ok = rd.bind(&b.vbo)
         ok = rd.bind(&b.ibo)
         ok = rd.bind(&b.texture)
-        model_matrix := linalg.matrix4_from_trs_f32(
+        model_matrix := lg.matrix4_from_trs_f32(
             t = b.position, 
             r = b.rotation,
             s = b.scale
@@ -275,9 +276,9 @@ draw :: proc(
     assert(ok)
 
     for &band in orbit_bands {
-        model_matrix := linalg.matrix4_from_trs_f32(
+        model_matrix := lg.matrix4_from_trs_f32(
                 t = ORBIT_CENTER,
-            r = linalg.quaternion_angle_axis_f32(0, vec3{0, 1, 0}),
+            r = lg.quaternion_angle_axis_f32(0, vec3{0, 1, 0}),
             s = vec3{1, 1, 1},
         )
         rd.push_constant_data(.Vertex, &model_matrix, 1)
@@ -312,7 +313,7 @@ create_ring_geometry :: proc(inner_radius, outer_radius: f32, segments: int, all
 
     for i in 0..<segments {
         t := f32(i) / f32(segments)
-        angle := t * linalg.to_radians(f32(360))
+        angle := t * lg.to_radians(f32(360))
         s := math.sin(angle)
         c := math.cos(angle)
 
@@ -434,8 +435,8 @@ clamp_camera :: proc(camera: ^Camera) {
 }
 
 camera_position :: proc(camera: Camera) -> vec3 {
-    yaw := linalg.to_radians(camera.yaw)
-    pitch := linalg.to_radians(camera.pitch)
+    yaw := lg.to_radians(camera.yaw)
+    pitch := lg.to_radians(camera.pitch)
 
     radius_xz := camera.distance * math.cos(pitch)
     offset := vec3 {
@@ -446,12 +447,11 @@ camera_position :: proc(camera: Camera) -> vec3 {
     return camera.target + offset
 }
 
-camera_view_matrix :: proc(camera: Camera) -> linalg.Matrix4f32 {
-    using linalg
-    distance_matrix := matrix4_translate_f32(vec3{0, 0, -camera.distance})
-    pitch_matrix := matrix4_rotate_f32(to_radians(camera.pitch), vec3{1, 0, 0})
-    yaw_matrix := matrix4_rotate_f32(to_radians(camera.yaw), vec3{0, 1, 0})
-    target_matrix := matrix4_translate_f32(-camera.target)
+camera_view_matrix :: proc(camera: Camera) -> lg.Matrix4f32 {
+    distance_matrix := lg.matrix4_translate_f32(vec3{0, 0, -camera.distance})
+    pitch_matrix := lg.matrix4_rotate_f32(lg.to_radians(camera.pitch), vec3{1, 0, 0})
+    yaw_matrix := lg.matrix4_rotate_f32(lg.to_radians(camera.yaw), vec3{0, 1, 0})
+    target_matrix := lg.matrix4_translate_f32(-camera.target)
     return distance_matrix * pitch_matrix * yaw_matrix * target_matrix
 }
 
@@ -462,12 +462,11 @@ update_camera :: proc(camera: ^Camera) {
     clamp_camera(camera)
 }
 
-create_proj_matrix :: proc() -> linalg.Matrix4f32 {
-    using linalg
+create_proj_matrix :: proc() -> lg.Matrix4f32 {
     window_size := rd.get_window_size()
     aspect := window_size.x / window_size.y
-    return matrix4_perspective_f32(
-        to_radians(f32(90)), 
+    return lg.matrix4_perspective_f32(
+        lg.to_radians(f32(90)), 
         aspect, 
         0.01, 
         1000
@@ -515,15 +514,15 @@ bodies_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]Bo
         body := bodies[index]
         e.spin_axis = vec3{0, 1, 0}
         initial_spin_angle := rng.float32_range(0, 360)
-        e.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), e.spin_axis)
+        e.rotation = lg.quaternion_angle_axis_f32(lg.to_radians(initial_spin_angle), e.spin_axis)
 
         if index == EARTH_INDEX {
             // Earth's axis is tilted 23.44 degrees relative to the orbital plane normal.
-            tilt := linalg.quaternion_angle_axis_f32(linalg.to_radians(-EARTH_AXIAL_TILT_DEG), vec3{1, 0, 0})
-            tilt_axis_y := math.cos(linalg.to_radians(EARTH_AXIAL_TILT_DEG))
-            tilt_axis_z := -math.sin(linalg.to_radians(EARTH_AXIAL_TILT_DEG))
+            tilt := lg.quaternion_angle_axis_f32(lg.to_radians(-EARTH_AXIAL_TILT_DEG), vec3{1, 0, 0})
+            tilt_axis_y := math.cos(lg.to_radians(EARTH_AXIAL_TILT_DEG))
+            tilt_axis_z := -math.sin(lg.to_radians(EARTH_AXIAL_TILT_DEG))
             e.spin_axis = vec3{0, tilt_axis_y, tilt_axis_z}
-            e.rotation = linalg.quaternion_angle_axis_f32(linalg.to_radians(initial_spin_angle), e.spin_axis) * tilt
+            e.rotation = lg.quaternion_angle_axis_f32(lg.to_radians(initial_spin_angle), e.spin_axis) * tilt
         }
 
         visual_radius := body.radius_earth
@@ -549,7 +548,7 @@ bodies_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]Bo
             e.orbit_speed_deg = 360.0 / orbital_period_seconds
         }
 
-        angle_radians := linalg.to_radians(e.orbit_angle_deg)
+        angle_radians := lg.to_radians(e.orbit_angle_deg)
         e.position = ORBIT_CENTER + vec3 {
             e.orbit_radius * math.sin(angle_radians),
             0,
@@ -562,9 +561,9 @@ bodies_from_mesh :: proc(mesh: Mesh, allocator := context.allocator) -> #soa[]Bo
 }
 
 PointLight :: struct {
-    position:               rd.vec3,
+    position:               vec3,
     intensity:              f32,
-    color:                  rd.vec3,
+    color:                  vec3,
     range:                  f32,
     attenuation_constant:   f32,
     attenuation_linear:     f32,

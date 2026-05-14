@@ -63,7 +63,7 @@ load_mesh_gltf :: proc(path: string, allocator := context.allocator, loc := #cal
     for i in 0..<len(mesh.vertices) {
         mesh.vertices[i] = {
             positions[i], 
-            uvs == nil ? 0 : uvs[i]
+            uvs == nil ? 0 : uvs[i],
         }
     }
 

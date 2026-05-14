@@ -232,12 +232,12 @@ create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: 
         return {}, false
     }
     wc: win.WNDCLASSEXW
-    {   using win, wc
-        cbSize = size_of(wc)
-        style = CS_OWNDC | CS_VREDRAW | CS_HREDRAW
-        lpfnWndProc = handle_msg_setup
-        hInstance = auto_cast hinst
-        lpszClassName = name
+    {   
+        wc.cbSize = size_of(wc)
+        wc.style = win.CS_OWNDC | win.CS_VREDRAW | win.CS_HREDRAW
+        wc.lpfnWndProc = handle_msg_setup
+        wc.hInstance = auto_cast hinst
+        wc.lpszClassName = name
     }
     if error := win.RegisterClassExW(&wc); error == 0 {
         log_win_err()
