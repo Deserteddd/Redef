@@ -265,6 +265,11 @@ create_structured_buffer :: proc(data: []$T, stages: bit_set[ShaderStage]) -> St
     }
 }
 
+destroy_structured_buffer :: proc(cb: StructuredBuffer) { 
+    cb.view->Release()
+    cb.buf->Release() 
+}
+
 /*
 Binds a generic resource to the active pipeline
     currently supported resource types:
