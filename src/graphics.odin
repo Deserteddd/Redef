@@ -23,6 +23,7 @@ Graphics :: struct {
     info_manager:   DXGIInfoManager,
     blend_mode:     BlendMode,
     blend_states:   [BlendMode]^d3d.IBlendState, //TODO: release on cleanup
+    cb_size_warned: bool
 }
 
 
@@ -57,6 +58,12 @@ VertexBuffer :: struct {
 IndexBuffer :: struct {
     buf: ^d3d.IBuffer,
     length: u32,
+}
+
+StructuredBuffer :: struct {
+    buf: ^d3d.IBuffer,
+    view: ^d3d.IShaderResourceView,
+    stages: bit_set[ShaderStage],
 }
 
 BlendMode :: enum {
@@ -221,8 +228,42 @@ create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
         0
     }
 }
-
 destroy_vertex_buffer :: proc(vb: VertexBuffer) { vb.buf->Release() }
+
+create_structured_buffer :: proc(data: []$T, stages: bit_set[ShaderStage]) -> StructuredBuffer {
+    len_bytes := u32(len(data) * size_of(T))
+    sb_desc := d3d.BUFFER_DESC {
+        ByteWidth = len_bytes,
+        Usage = .DEFAULT,
+        BindFlags = {.SHADER_RESOURCE},
+        MiscFlags = {.BUFFER_STRUCTURED},
+        StructureByteStride = size_of(T)
+    }
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = raw_data(data)
+    }
+    sb: ^d3d.IBuffer
+    info_manager_set()
+    ok := g.graphics.device->CreateBuffer(&sb_desc, &sd, &sb)
+    gfx_check(ok, "Structured buffer creation failed")
+
+    buf_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
+        ViewDimension = .BUFFER,
+        Buffer = {
+            NumElements = u32(len(data)),
+        }
+
+    }
+
+    view: ^d3d.IShaderResourceView
+    ok = g.graphics.device->CreateShaderResourceView(sb, &buf_desc, &view)
+    gfx_check(ok, "Structured buffer view creation failed")
+    return StructuredBuffer {
+        buf = sb,
+        view = view,
+        stages = stages
+    }
+}
 
 /*
 Binds a generic resource to the active pipeline
@@ -233,7 +274,7 @@ Binds a generic resource to the active pipeline
         PixelShader,
         Texture
 */
-bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
+bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool) {
     if resource == nil do return
     context.logger = g.logger
     info_manager_set()
@@ -259,8 +300,22 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
        
         case typeid_of(Texture):
             tex := cast(^Texture)resource
-            g.graphics.ctx->PSSetShaderResources(0, 1, &tex.view)
-            g.graphics.ctx->PSSetSamplers(0, 1, &tex.sampler)
+            g.graphics.ctx->PSSetShaderResources(slot, 1, &tex.view)
+            g.graphics.ctx->PSSetSamplers(slot, 1, &tex.sampler)
+        case typeid_of(StructuredBuffer):
+            sb := cast(^StructuredBuffer)resource
+            if .Vertex in sb.stages {
+                g.graphics.ctx->VSSetShaderResources(
+                    slot, 1, 
+                    raw_data([]^d3d.IShaderResourceView{sb.view})
+                )
+            }
+            if .Pixel in sb.stages {
+                g.graphics.ctx->PSSetShaderResources(
+                    slot, 1, 
+                    raw_data([]^d3d.IShaderResourceView{sb.view})
+                )
+            }
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
@@ -277,16 +332,13 @@ bind :: proc(resource: ^$T, loc := #caller_location) -> (ok: bool) {
     return
 }
 
+// This is slow due to always creating/destroying a buffer. Consider a better design
 push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #caller_location) { 
     context.logger = g.logger
     ensure(data != nil)
 
-    size: u32 = size_of(data^)
-    mod := size % 16
-
-    if mod != 0 do log.warnf("size_of(data) == %v, should be a multiple of 16", size, location = loc)
-    size = size + mod
-    if size < 96 do size = 96
+    size: u32 = (size_of(data^) + 15) & ~u32(15)
+    assert(size%16 == 0)
     cb_desc := d3d.BUFFER_DESC{
 		BindFlags = {.CONSTANT_BUFFER},
 		Usage     = .DYNAMIC,
@@ -318,6 +370,14 @@ draw_indexed :: proc(indices: u32, loc := #caller_location) {
 
     info_manager_set()
     g.graphics.ctx->DrawIndexed(indices, 0, 0)
+    info_manager_log(loc = loc)
+}
+
+draw :: proc(vertex_count: u32, loc := #caller_location) {
+    context.logger = g.logger
+
+    info_manager_set()
+    g.graphics.ctx->Draw(vertex_count, 0)
     info_manager_log(loc = loc)
 }
 

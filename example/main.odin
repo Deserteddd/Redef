@@ -25,7 +25,7 @@ SUN_RENDER_RADIUS :: f32(24.0)
 EARTH_INDEX :: int(3)
 EARTH_AXIAL_TILT_DEG :: f32(23.44)
 
-
+Color :: distinct vec3
 shader_src := #load("shaders/shaders.hlsl")
 
 main :: proc() {
@@ -62,6 +62,9 @@ main :: proc() {
     mesh: Mesh
     mesh, ok = load_mesh_gltf("example/assets/sphere.glb"); assert(ok)
     defer destroy_mesh_gltf(mesh)
+
+    colors: []Color = {{0, 255, 255}, {255, 255, 0}}
+    color_buf := rd.create_structured_buffer(colors[:], {.Pixel})
     
     // Create entities: Sun + planets
     bodies := bodies_from_mesh(mesh)
@@ -90,7 +93,6 @@ main :: proc() {
         defer {
             free_all(context.temp_allocator)
             frame += 1
-            // fmt.println(rd.get_dt())
         }
         // ------- User Input --------
         for event in rd.pump_event_iter() {
@@ -141,7 +143,7 @@ main :: proc() {
         update(&bodies, frame)
         camera.target = bodies[selected_body_index].position
         apply_focus_profile(&camera, bodies[selected_body_index])
-        draw(bodies, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader)
+        draw(bodies, orbit_bands, camera, &pixel_shader, &sun_pixel_shader, &orbit_band_pixel_shader, &color_buf)
     }
 
     delete_soa(bodies)
@@ -191,7 +193,7 @@ apply_focus_profile :: proc(camera: ^Camera, body: Body, reset_distance := false
 
 update :: proc(entitites: ^#soa[]Body, frame: u32) {
     _ = frame
-    dt_seconds := f32(rd.get_dt()) / f32(time.Second)
+    dt_seconds := f32(rd.get_dt() / 1000)
     spin_delta_deg := f32(50.0) * dt_seconds
 
     for &b, i in entitites {
@@ -223,6 +225,7 @@ draw :: proc(
     pixel_shader: ^rd.PixelShader,
     sun_pixel_shader: ^rd.PixelShader,
     orbit_band_pixel_shader: ^rd.PixelShader,
+    color_buf: ^rd.StructuredBuffer
 ) {
     rd.clear(BACKGROUND)
     ok: bool
@@ -270,12 +273,10 @@ draw :: proc(
         rd.draw_indexed(b.ibo.length)
     }
 
-    ok = rd.set_blend_mode(.Alpha)
-    assert(ok)
-    ok = rd.bind(orbit_band_pixel_shader)
-    assert(ok)
-
-    for &band in orbit_bands {
+    ok = rd.set_blend_mode(.Alpha); assert(ok)
+    ok = rd.bind(orbit_band_pixel_shader); assert(ok)
+    ok = rd.bind(color_buf, 1); assert(ok)
+    for &band, i in orbit_bands {
         model_matrix := lg.matrix4_from_trs_f32(
                 t = ORBIT_CENTER,
             r = lg.quaternion_angle_axis_f32(0, vec3{0, 1, 0}),
@@ -285,10 +286,17 @@ draw :: proc(
 
         ok = rd.bind(&band.vbo)
         ok = rd.bind(&band.ibo)
+        idx := u32(i%2)
+        rd.push_constant_data(.Pixel, &idx, 0)
         rd.draw_indexed(band.ibo.length)
     }
 
     rd.frame_end()
+}
+
+ColorIndex :: struct {
+    index: u32,
+    _: [4]u32
 }
 
 create_orbit_bands :: proc(bodies: #soa[]Body, allocator := context.allocator) -> []OrbitBand {
@@ -456,9 +464,10 @@ camera_view_matrix :: proc(camera: Camera) -> lg.Matrix4f32 {
 }
 
 update_camera :: proc(camera: ^Camera) {
-    mouse_delta := rd.get_relative_mouse_movement()
-    camera.yaw -= f32(mouse_delta.x) * camera.mouse_sense
-    camera.pitch -= f32(mouse_delta.y) * camera.mouse_sense
+    mouse_delta: vec2
+    mouse_delta.x, mouse_delta.y = rd.get_relative_mouse_movement()
+    camera.yaw -= mouse_delta.x * camera.mouse_sense
+    camera.pitch -= mouse_delta.y * camera.mouse_sense
     clamp_camera(camera)
 }
 

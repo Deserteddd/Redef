@@ -86,10 +86,10 @@ time_since_start :: proc() -> time.Duration {
     return time.since(g.elapsed)
 }
 
-get_dt :: proc() -> time.Duration {
+get_dt :: proc() -> f64 {
     elapsed := time.since(g.dt)
     g.dt = time.now()
-    return elapsed
+    return time.duration_milliseconds(elapsed)
 }
 
 create_window :: proc (name: string, width, height: i32, debug: bool, loc := #caller_location) -> bool{
@@ -157,14 +157,14 @@ set_window_mode :: proc(wm: WindowMode, loc := #caller_location) {
 
 }
 
-get_mouse_position :: proc() -> (x: f32, y: f32) {
+get_mouse_position :: proc() -> (x, y: f32) {
     return f32(g.mouse_position.x), f32(g.mouse_position.y)
 }
 
-get_relative_mouse_movement :: proc() -> [2]i32 {
+get_relative_mouse_movement :: proc() -> (x, y: f32) {
     delta := g.mouse_delta
     g.mouse_delta = 0
-    return delta
+    return f32(delta.x), f32(delta.y)
 }
 
 is_key_down :: proc(key: Keycode) -> bool {

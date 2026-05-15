@@ -33,9 +33,6 @@ vs_out vs_main(vs_in input) {
 	return output;
 }
 
-Texture2D tex;
-
-SamplerState splr;
 
 
 cbuffer Camera {
@@ -58,6 +55,19 @@ struct PointLight {
 cbuffer Lighting {
     PointLight point_light;
 };
+
+struct Color {
+    float3 color;
+};
+
+cbuffer ColorIdx {
+    uint color_index;
+}
+
+
+Texture2D tex : register(t0);
+SamplerState splr : register(s0);
+StructuredBuffer<Color> colors : register(t1);
 
 float compute_attenuation(float distance_to_light) {
     float attenuation = 1.0 / max(
@@ -112,6 +122,7 @@ float4 ps_sun(vs_out input) : SV_Target {
     return float4(saturate(glow), 1.0);
 }
 
+
 float4 ps_orbit_band(vs_out input) : SV_Target {
-    return float4(1, 1, 1, 0.08);
+    return float4(normalize(colors[color_index].color), 0.28);
 }
