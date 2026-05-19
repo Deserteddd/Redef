@@ -5,6 +5,7 @@ import "base:runtime"
 import win "core:sys/windows"
 import que "core:container/queue"
 
+
 // -------------------------------------------
 //               Protected
 // -------------------------------------------
@@ -42,10 +43,16 @@ init_windows_window :: proc() -> bool {
     )
     g.window.handle = handle
 
-    log.debug(g.window.handle)
     if g.window.handle == nil {
         log_win_err()
         return false
+    }
+    rid: win.RAWINPUTDEVICE
+    rid.usUsagePage = 1
+    rid.usUsage = 2
+    if !win.RegisterRawInputDevices(&rid, 1, size_of(rid)) {
+        log.error("Failed to register raw input device")
+        log_win_err()
     }
     return true
 }
@@ -94,6 +101,44 @@ resize_window :: proc(handle: WindowHandle) {
         0x0002 // SWP_NOMOVE
     )
     if !ok do log_win_err()
+}
+
+@(private = "package")
+_set_cursor :: proc() {
+    hwnd := win.HWND(g.window.handle)
+    if g.raw_input {
+        win.SetCapture(hwnd)
+        for win.ShowCursor(win.FALSE) >= 0 {}
+        rect: win.RECT
+        if win.GetClientRect(hwnd, &rect) {
+            tl := win.POINT{rect.left, rect.top}
+            br := win.POINT{rect.right, rect.bottom}
+            win.ClientToScreen(hwnd, &tl)
+            win.ClientToScreen(hwnd, &br)
+            rect.left = tl.x
+            rect.top = tl.y
+            rect.right = br.x
+            rect.bottom = br.y
+            win.ClipCursor(&rect)
+        }
+    } else {
+        win.ClipCursor(nil)
+        win.ReleaseCapture()
+        for win.ShowCursor(win.TRUE) < 0 {}
+        rect: win.RECT
+        if win.GetClientRect(hwnd, &rect) {
+            tl := win.POINT{rect.left, rect.top}
+            br := win.POINT{rect.right, rect.bottom}
+            win.ClientToScreen(hwnd, &tl)
+            win.ClientToScreen(hwnd, &br)
+            rect.left = tl.x
+            rect.top = tl.y
+            rect.right = br.x
+            rect.bottom = br.y
+
+            win.SetCursorPos(g.mouse_position.x + rect.left, g.mouse_position.y + rect.top)
+        }
+    }
 }
 
 // Returns false if window was already destroyed
@@ -162,6 +207,7 @@ WndProc :: proc "stdcall" (
         
         // Move
         case win.WM_MOUSEMOVE:
+            if g.raw_input do break
             mpos := g.mouse_position
             create_mouse_event(.Move, lparam)
             g.mouse_delta = mpos - g.mouse_position
@@ -170,6 +216,42 @@ WndProc :: proc "stdcall" (
             g.mouse.button_state = {}
 
         case win.WM_SETCURSOR: win.SetCursor(win.LoadCursorA(nil, win.IDC_ARROW));
+        
+        case win.WM_INPUT:
+            if !g.raw_input do break
+            size: u32
+            if win.GetRawInputData(
+                auto_cast lparam,
+                win.RID_INPUT,
+                nil,
+                &size,
+                size_of(win.RAWINPUTHEADER)
+            ) == ~u32(0){
+                break
+            }
+
+            resize(&g.mouse.raw_input_buffer, size)
+            if win.GetRawInputData(
+                auto_cast lparam,
+                win.RID_INPUT,
+                raw_data(g.mouse.raw_input_buffer[:]),
+                &size,
+                size_of(win.RAWINPUTHEADER)
+            ) != size {
+                break
+            }
+            if len(g.mouse.raw_input_buffer) != 48 {
+                log.warn(
+                    "win.GetRawInputData resized raw input buffer to: %v (expected: 48)",
+                    len(g.mouse.raw_input_buffer)
+                )
+                break
+            }
+            ri: ^win.RAWINPUT = auto_cast raw_data(g.mouse.raw_input_buffer[:])
+            if (ri.header.dwType == win.RIM_TYPEMOUSE) && (ri.data.mouse.lLastX != 0 || ri.data.mouse.lLastY != 0) {
+                g.mouse_delta = {ri.data.mouse.lLastX, ri.data.mouse.lLastY}
+            }
+
     }
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
@@ -195,12 +277,13 @@ create_kb_event :: proc(event_type: KeyboardEventType, wparam: win.WPARAM) {
 
 @(private = "file")
 create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wparam: win.WPARAM = uintptr(0)) {
+
     x := win.GET_X_LPARAM(lparam)
     y := win.GET_Y_LPARAM(lparam)
     if event_type == .MWheel {
         x = i32(win.GET_WHEEL_DELTA_WPARAM(wparam)) / 120
         y = 0
-    } else {
+    } else if !g.raw_input {
         g.mouse_position = {x, y}
     }
 

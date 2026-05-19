@@ -12,21 +12,39 @@ import win "core:sys/windows"
 
 @(private = "package")
 Graphics :: struct {
-    device:         ^d3d.IDevice,
-    swapchain:      ^dxgi.ISwapChain,
-    ctx:            ^d3d.IDeviceContext,
-    target:         ^d3d.IRenderTargetView,
-    dsv:            ^d3d.IDepthStencilView,
-    depth_opaque:   ^d3d.IDepthStencilState,
-    depth_blended:  ^d3d.IDepthStencilState,
-    rasterizer:     ^d3d.IRasterizerState,
+    device:             ^d3d.IDevice,
+    swapchain:          ^dxgi.ISwapChain,
+    ctx:                ^d3d.IDeviceContext,
+    target:             ^d3d.IRenderTargetView,
+    dsv:                ^d3d.IDepthStencilView,
+    depth_opaque:       ^d3d.IDepthStencilState,
+    depth_blended:      ^d3d.IDepthStencilState,
+    rasterizer:         ^d3d.IRasterizerState,
+    constant_buffers:   [MAX_CB_SLOTS][CB_Size]^d3d.IBuffer,
+
     info_manager:   DXGIInfoManager,
     blend_mode:     BlendMode,
     blend_states:   [BlendMode]^d3d.IBlendState, //TODO: release on cleanup
     cb_size_warned: bool
 }
 
+MAX_CB_SLOTS :: d3d.COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT
 
+CB_Size :: enum {
+    CB16,
+    CB32,
+    CB64,
+    CB128,
+    CB256,
+    CB512,
+    CB1024
+}
+
+
+PrimitiveTopology :: enum {
+    lineList,
+    triangleList
+}
 
 Texture :: struct {
     width:      u32,
@@ -58,6 +76,12 @@ VertexBuffer :: struct {
 IndexBuffer :: struct {
     buf: ^d3d.IBuffer,
     length: u32,
+    format: IndexFormat
+}
+
+IndexFormat :: enum {
+    U16,
+    U32,
 }
 
 StructuredBuffer :: struct {
@@ -81,22 +105,21 @@ destroy :: proc{
 }
 
 // Return: ok
-set_blend_mode :: proc(mode: BlendMode) -> bool {
+set_blend_mode :: proc(mode: BlendMode) {
     context.logger = g.logger
 
     if g.graphics.ctx == nil {
         log.error("Graphics context is not initialized")
-        return false
     }
 
     if g.graphics.blend_mode == mode && g.graphics_init {
-        return true
+        return
     }
 
     state := g.graphics.blend_states[mode]
     if state == nil {
         log.errorf("Blend state for mode %v is not initialized", mode)
-        return false
+        return
     }
 
     blend_factor := [4]f32{1, 1, 1, 1}
@@ -112,14 +135,109 @@ set_blend_mode :: proc(mode: BlendMode) -> bool {
 
     g.graphics.blend_mode = mode
     info_manager_log()
-    return true
 }
 
-// Assumes Texture format 
-load_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
+TextureBuffer :: struct {
+    width:      u32,
+    height:     u32,
+    count:      u32,
+    tex:        ^d3d.ITexture2D,
+    view:       ^d3d.IShaderResourceView,
+    sampler:    ^d3d.ISamplerState,
+}
+
+create_texture_buffer :: proc(pixels: [][]byte, width, height: u32, loc := #caller_location) -> TextureBuffer {
+    context.logger = g.logger
+    log.infof("Loading texture: %v * [%v, %v]", len(pixels), width, height, location = loc)
+    ensure(pixels != nil)
+    ensure(pixels[0] != nil)
+    for image in pixels {
+        ensure(len(image) == len(pixels[0]), "All images in a texture buffer must be of equal size")
+    }
+
+    tex_desc: d3d.TEXTURE2D_DESC = {
+        Width      = width,
+        Height     = height,
+        MipLevels  = 1,
+        ArraySize  = u32(len(pixels)), // number of textures in the array
+        Format     = .R8G8B8A8_UNORM,
+        SampleDesc = {
+            Count = 1
+        },
+        Usage      = .DEFAULT,
+        BindFlags  = {.SHADER_RESOURCE},
+    }
+
+    // One SUBRESOURCE_DATA per array slice
+    subresources := make([]d3d.SUBRESOURCE_DATA, len(pixels))
+    defer delete(subresources)
+
+    for i in 0..<len(pixels) {
+        subresources[i] = d3d.SUBRESOURCE_DATA{
+            pSysMem     = raw_data(pixels[i]),
+            SysMemPitch = width * size_of(byte) * 4,
+        }
+    }
+
+    tex: ^d3d.ITexture2D
+    result := g.graphics.device->CreateTexture2D(
+        &tex_desc,
+        raw_data(subresources),
+        &tex,
+    )
+    gfx_check(result)
+
+    view_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
+        Format        = tex_desc.Format,
+        ViewDimension = d3d.SRV_DIMENSION.TEXTURE2DARRAY,
+
+        Texture2DArray = {
+            MostDetailedMip = 0,
+            MipLevels       = 1,
+
+            FirstArraySlice = 0,
+            ArraySize       = u32(len(pixels))
+        },
+    }
+
+    view: ^d3d.IShaderResourceView
+    result = g.graphics.device->CreateShaderResourceView(
+        tex,
+        &view_desc,
+        &view,
+    )
+    gfx_check(result)
+
+    sampler_desc: d3d.SAMPLER_DESC = {
+        Filter   = .MIN_MAG_MIP_LINEAR,
+        AddressU = .WRAP,
+        AddressV = .WRAP,
+        AddressW = .WRAP,
+    }
+
+    sampler: ^d3d.ISamplerState
+    result = g.graphics.device->CreateSamplerState(
+        &sampler_desc,
+        &sampler,
+    )
+    gfx_check(result)
+
+    return TextureBuffer{
+        width,
+        height,
+        u32(len(pixels)),
+        tex,
+        view,
+        sampler,
+    }
+} 
+
+// Assumes Texture format rgba8
+create_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
     context.logger = g.logger
     log.infof("Loading texture: [%v, %v]", width, height, location = loc)
     ensure(pixels != nil)
+
     tex_desc: d3d.TEXTURE2D_DESC = {
         Width  = width,
         Height = height,
@@ -172,7 +290,42 @@ destroy_texture :: proc(t: Texture) {
     t.tex->Release()
 }
 
-create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
+create_index_buffer :: proc{
+    create_index_buffer_16,
+    create_index_buffer_32,
+}
+
+
+create_index_buffer_32 :: proc(indices: []u32) -> IndexBuffer {
+    context.logger = g.logger
+    ensure(indices != nil)
+
+    len_bytes := u32(len(indices) * size_of(u32))
+    ibo_desc := d3d.BUFFER_DESC{
+		BindFlags = {.INDEX_BUFFER},
+		Usage     = .DEFAULT,
+		ByteWidth = len_bytes,
+        StructureByteStride = size_of(u32),
+	}
+
+    sd := d3d.SUBRESOURCE_DATA {
+        pSysMem = raw_data(indices)
+    }
+
+    ibo: ^d3d.IBuffer
+
+    info_manager_set()
+    ok := g.graphics.device->CreateBuffer(&ibo_desc, &sd, &ibo)
+    gfx_check(ok, "Index buffer creation failed")
+    return IndexBuffer {
+        buf = ibo,
+        length = u32(len(indices)),
+        format = .U32
+    }
+}
+
+
+create_index_buffer_16 :: proc(indices: []u16) -> IndexBuffer {
     context.logger = g.logger
     ensure(indices != nil)
 
@@ -195,11 +348,12 @@ create_index_buffer :: proc(indices: []u16) -> IndexBuffer {
     gfx_check(ok, "Index buffer creation failed")
     return IndexBuffer {
         buf = ibo,
-        length = u32(len(indices))
+        length = u32(len(indices)),
+        format = .U16
     }
 }
-
 destroy_index_buffer :: proc(ib: IndexBuffer) {ib.buf->Release()}
+
 
 create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
     context.logger = g.logger
@@ -270,6 +424,18 @@ destroy_structured_buffer :: proc(cb: StructuredBuffer) {
     cb.buf->Release() 
 }
 
+set_primitive_topology :: proc(topology: PrimitiveTopology) {
+    context.logger = g.logger
+    topo: d3d.PRIMITIVE_TOPOLOGY
+    switch topology {
+        case .lineList: topo     = .LINELIST
+        case .triangleList: topo = .TRIANGLELIST
+    } 
+    info_manager_set()
+    g.graphics.ctx->IASetPrimitiveTopology(topo)
+    info_manager_log()
+}
+
 /*
 Binds a generic resource to the active pipeline
     currently supported resource types:
@@ -291,11 +457,13 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
 
         case typeid_of(IndexBuffer):
             ibo := cast(^IndexBuffer)resource
-            g.graphics.ctx->IASetIndexBuffer(ibo.buf, .R16_UINT, 0)
+            switch ibo.format {
+                case .U16: g.graphics.ctx->IASetIndexBuffer(ibo.buf, .R16_UINT, 0)
+                case .U32: g.graphics.ctx->IASetIndexBuffer(ibo.buf, .R32_UINT, 0)
+            }
 
         case typeid_of(VertexShader):
             vs := cast(^VertexShader)resource
-            g.graphics.ctx->IASetPrimitiveTopology(.TRIANGLELIST)
             g.graphics.ctx->IASetInputLayout(vs.layout)
             g.graphics.ctx->VSSetShader(vs.shader, nil, 0)
 
@@ -307,6 +475,7 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
             tex := cast(^Texture)resource
             g.graphics.ctx->PSSetShaderResources(slot, 1, &tex.view)
             g.graphics.ctx->PSSetSamplers(slot, 1, &tex.sampler)
+
         case typeid_of(StructuredBuffer):
             sb := cast(^StructuredBuffer)resource
             if .Vertex in sb.stages {
@@ -321,6 +490,10 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
                     raw_data([]^d3d.IShaderResourceView{sb.view})
                 )
             }
+        case typeid_of(TextureBuffer):
+            tb := cast(^TextureBuffer)resource
+            g.graphics.ctx->PSSetShaderResources(slot, 1, &tb.view)
+            g.graphics.ctx->PSSetSamplers(slot, 1, &tb.sampler)
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
@@ -337,44 +510,62 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
     return
 }
 
+import "core:mem"
+
 // This is slow due to always creating/destroying a buffer. Consider a better design
 push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #caller_location) { 
     context.logger = g.logger
     ensure(data != nil)
+    if slot >= u32(MAX_CB_SLOTS) {
+        log.errorf("Constant buffer slot %v is out of range (max: %v)", slot, MAX_CB_SLOTS-1, location = loc)
+        return
+    }
 
     size: u32 = (size_of(data^) + 15) & ~u32(15)
-    assert(size%16 == 0)
-    cb_desc := d3d.BUFFER_DESC{
-		BindFlags = {.CONSTANT_BUFFER},
-		Usage     = .DYNAMIC,
-        CPUAccessFlags = {.WRITE},
-		ByteWidth = u32(size)
-	}
-
-    sd := d3d.SUBRESOURCE_DATA {
-        pSysMem = data
+    buffer_size: CB_Size
+    switch size {
+        case 0..=16:        buffer_size = .CB16
+        case 17..=32:       buffer_size = .CB32
+        case 33..=64:       buffer_size = .CB64
+        case 65..=128:      buffer_size = .CB128
+        case 129..=256:     buffer_size = .CB256
+        case 257..=512:     buffer_size = .CB512
+        case 513..=1024:    buffer_size = .CB1024
+        case: log.errorf("Size of constant data %v is too large (max: 1024)", size_of(data^))
     }
-    
-    cb: ^d3d.IBuffer
-    info_manager_set()
-    err := g.graphics.device->CreateBuffer(&cb_desc, &sd, &cb)
-    gfx_check(err, "Constant buffer creation failed")
+    // log.infof("For buffer size %v, cb <%v> will be used", size, buffer_size)
+    buffer := g.graphics.constant_buffers[slot][buffer_size]
 
+    mapped: d3d.MAPPED_SUBRESOURCE
+
+    g.graphics.ctx->Map(
+        cast(^d3d.IResource)buffer,
+        0,
+        .WRITE_DISCARD,
+        {},
+        &mapped,
+    )
+
+    mem.copy(mapped.pData, data, size_of(data^))
+
+    g.graphics.ctx->Unmap(
+        cast(^d3d.IResource)buffer,
+        0,
+    )
     info_manager_log()
+
     switch stage {
-        case .Vertex: g.graphics.ctx->VSSetConstantBuffers(slot, 1, &cb)
-        case .Pixel: g.graphics.ctx->PSSetConstantBuffers(slot, 1, &cb)
+        case .Vertex: g.graphics.ctx->VSSetConstantBuffers(slot, 1, &buffer)
+        case .Pixel: g.graphics.ctx->PSSetConstantBuffers(slot, 1, &buffer)
     }
-    rc := cb->Release()
-    assert(rc == 0)
     info_manager_log()
 }
 
-draw_indexed :: proc(indices: u32, loc := #caller_location) {
+draw_indexed :: proc(start, n: u32, loc := #caller_location) {
     context.logger = g.logger
 
     info_manager_set()
-    g.graphics.ctx->DrawIndexed(indices, 0, 0)
+    g.graphics.ctx->DrawIndexed(n, start, 0)
     info_manager_log(loc = loc)
 }
 
@@ -580,7 +771,8 @@ sd: dxgi.SWAP_CHAIN_DESC
 
     rasterizer_desc: d3d.RASTERIZER_DESC = {
         FillMode = .SOLID,
-        CullMode = .NONE
+        CullMode = .BACK,
+        FrontCounterClockwise = true,
     }
 
     result = g.graphics.device->CreateRasterizerState(&rasterizer_desc, &g.graphics.rasterizer)
@@ -608,6 +800,29 @@ sd: dxgi.SWAP_CHAIN_DESC
     }
     result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Alpha])
     gfx_check(result)
+
+    for slot in 0..<MAX_CB_SLOTS {
+        for cb_size, i in CB_Size {
+            size := 16<<uint(i)
+            log.info("Creating cb of size: %v for slot %v", size, slot)
+            cb_desc := d3d.BUFFER_DESC{
+                BindFlags = {.CONSTANT_BUFFER},
+                Usage     = .DYNAMIC,
+                CPUAccessFlags = {.WRITE},
+                ByteWidth = u32(size)
+            }
+
+            sd := d3d.SUBRESOURCE_DATA {}
+            
+            cb: ^d3d.IBuffer
+            info_manager_set()
+            err := g.graphics.device->CreateBuffer(&cb_desc, nil, &cb)
+            gfx_check(err, "Constant buffer creation failed")
+            g.graphics.constant_buffers[slot][cb_size] = cb
+
+            info_manager_log()
+        }
+    }
 
     // Opaque
     render_targets[0] = {
@@ -647,9 +862,10 @@ sd: dxgi.SWAP_CHAIN_DESC
     result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Additive])
     gfx_check(result)
 
-    ok := set_blend_mode(.Opaque)
+    set_blend_mode(.Opaque)
+    set_primitive_topology(.triangleList)
+
     g.graphics_init = true
-    assert(ok)
     log.info("Initialized graphics", location = loc)
 }
 
@@ -818,6 +1034,7 @@ DXGIInfoManager :: struct {
 
 @(private = "file")
 info_manager_log :: proc(loc := #caller_location) {
+    if !g.debug do return
     im := g.graphics.info_manager
     end := im.info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
     ok: dxgi.HRESULT
@@ -836,11 +1053,13 @@ info_manager_log :: proc(loc := #caller_location) {
 
 @(private = "file")
 info_manager_set :: proc() {
+    if !g.debug do return
     g.graphics.info_manager.next = g.graphics.info_manager.info_queue->GetNumStoredMessages(dxgi.DEBUG_ALL)
 }
 
 @(private = "file")
 create_info_manager :: proc() {
+    if !g.debug do return
     assert(g.graphics.info_manager.info_queue == nil)
     ok := dxgi.DXGIGetDebugInterface1(0, dxgi.IInfoQueue_UUID, cast(^rawptr)&g.graphics.info_manager.info_queue)
     gfx_check(ok)

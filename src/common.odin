@@ -20,16 +20,16 @@ Global :: struct {
     event_queue:    EventQueue,
     mouse_position: [2]i32,
     mouse_delta:    [2]i32,
-    // window_count:   u32,
-    // windows:        map[WindowHandle]^Window,
     window:         Window,
     graphics:       Graphics,
     dt:             time.Time,
     elapsed:        time.Time,
     logger:         log.Logger,
     window_mode:    WindowMode,
-    graphics_init:  bool,
     mouse:          Mouse,
+    debug,
+    raw_input,
+    graphics_init:  bool,
 }
 
 @(private = "package")

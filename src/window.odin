@@ -94,6 +94,7 @@ get_dt :: proc() -> f64 {
 
 create_window :: proc (name: string, width, height: i32, debug: bool, loc := #caller_location) -> bool{
     if debug do g.logger = log.create_console_logger()
+    g.debug = debug
     context.logger = g.logger
     alloc_err := que.init(&g.event_queue, capacity = 32)
     if alloc_err != nil {
@@ -169,4 +170,9 @@ get_relative_mouse_movement :: proc() -> (x, y: f32) {
 
 is_key_down :: proc(key: Keycode) -> bool {
     return g.kb_state[key]
+}
+
+set_relative_mouse_mode :: proc(enabled := true) {
+    g.raw_input = enabled
+    _set_cursor()
 }
