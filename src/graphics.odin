@@ -19,8 +19,9 @@ Graphics :: struct {
     dsv:                ^d3d.IDepthStencilView,
     depth_opaque:       ^d3d.IDepthStencilState,
     depth_blended:      ^d3d.IDepthStencilState,
+    depth_skybox:       ^d3d.IDepthStencilState,
     rasterizer:         ^d3d.IRasterizerState,
-    constant_buffers:   [MAX_CB_SLOTS][CB_Size]^d3d.IBuffer,
+    constant_buffers:   [ShaderStage][MAX_CB_SLOTS][CB_Size]^d3d.IBuffer,
 
     info_manager:   DXGIInfoManager,
     blend_mode:     BlendMode,
@@ -40,6 +41,14 @@ CB_Size :: enum {
     CB1024
 }
 
+CubeFace :: enum {
+	PX = 0,
+	NX = 1,
+	PY = 2,
+	NY = 3,
+	PZ = 4,
+	NZ = 5,
+}
 
 PrimitiveTopology :: enum {
     lineList,
@@ -52,6 +61,22 @@ Texture :: struct {
     tex:        ^d3d.ITexture2D,
     view:       ^d3d.IShaderResourceView,
     sampler:    ^d3d.ISamplerState,
+}
+
+TextureBuffer :: struct {
+    width:      u32,
+    height:     u32,
+    count:      u32,
+    tex:        ^d3d.ITexture2D,
+    view:       ^d3d.IShaderResourceView,
+    sampler:    ^d3d.ISamplerState,
+}
+
+TextureCube :: struct {
+    size: u32,
+    tex: ^d3d.ITexture2D,
+    view: ^d3d.IShaderResourceView,
+    sampler: ^d3d.ISamplerState
 }
 
 ShaderStage :: enum {
@@ -93,7 +118,8 @@ StructuredBuffer :: struct {
 BlendMode :: enum {
     Alpha,
     Opaque,
-    Additive
+    Additive,
+    Skybox
 }
 
 destroy :: proc{
@@ -131,24 +157,19 @@ set_blend_mode :: proc(mode: BlendMode) {
             g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_opaque, 1)
         case .Alpha, .Additive:
             g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_blended, 1)
+        case .Skybox:
+            g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_skybox, 1)
     }
 
     g.graphics.blend_mode = mode
     info_manager_log()
 }
 
-TextureBuffer :: struct {
-    width:      u32,
-    height:     u32,
-    count:      u32,
-    tex:        ^d3d.ITexture2D,
-    view:       ^d3d.IShaderResourceView,
-    sampler:    ^d3d.ISamplerState,
-}
+
 
 create_texture_buffer :: proc(pixels: [][]byte, width, height: u32, loc := #caller_location) -> TextureBuffer {
     context.logger = g.logger
-    log.infof("Loading texture: %v * [%v, %v]", len(pixels), width, height, location = loc)
+    log.infof("Loading texture buffer: %v x [%v, %v]", len(pixels), width, height, location = loc)
     ensure(pixels != nil)
     ensure(pixels[0] != nil)
     for image in pixels {
@@ -231,6 +252,92 @@ create_texture_buffer :: proc(pixels: [][]byte, width, height: u32, loc := #call
         sampler,
     }
 } 
+
+create_texture_cube :: proc(
+    size: u32,
+    pixels: [CubeFace][]byte,
+) -> TextureCube {
+
+    tex_desc: d3d.TEXTURE2D_DESC = {
+        Width      = size,
+        Height     = size,
+        MipLevels  = 1,
+        ArraySize  = 6, // one slice per cube face
+
+        Format     = .R8G8B8A8_UNORM,
+
+        SampleDesc = {
+            Count = 1,
+        },
+
+        Usage      = .DEFAULT,
+
+        BindFlags  = {.SHADER_RESOURCE},
+
+        MiscFlags  = {.TEXTURECUBE},
+    }
+
+    // One subresource per cube face
+    subresources: [6]d3d.SUBRESOURCE_DATA
+
+    for face in CubeFace {
+        subresources[face] = d3d.SUBRESOURCE_DATA{
+            pSysMem     = raw_data(pixels[face]),
+            SysMemPitch = size * 4,
+        }
+    }
+
+    tex: ^d3d.ITexture2D
+
+    result := g.graphics.device->CreateTexture2D(
+        &tex_desc,
+        raw_data(subresources[:]),
+        &tex,
+    )
+    gfx_check(result)
+
+    view_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
+        Format        = tex_desc.Format,
+        ViewDimension = .TEXTURECUBE,
+
+        TextureCube = {
+            MostDetailedMip = 0,
+            MipLevels       = 1,
+        },
+    }
+
+    view: ^d3d.IShaderResourceView
+
+    result = g.graphics.device->CreateShaderResourceView(
+        tex,
+        &view_desc,
+        &view,
+    )
+    gfx_check(result)
+
+    sampler_desc: d3d.SAMPLER_DESC = {
+        Filter   = .MIN_MAG_MIP_LINEAR,
+
+        AddressU = .CLAMP,
+        AddressV = .CLAMP,
+        AddressW = .CLAMP,
+    }
+
+    sampler: ^d3d.ISamplerState
+
+    result = g.graphics.device->CreateSamplerState(
+        &sampler_desc,
+        &sampler,
+    )
+    gfx_check(result)
+
+    return TextureCube{
+        size,
+        tex,
+        view,
+        sampler,
+    }
+}
 
 // Assumes Texture format rgba8
 create_texture :: proc(pixels: []byte, width, height: u32, loc := #caller_location) -> Texture {
@@ -494,6 +601,11 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
             tb := cast(^TextureBuffer)resource
             g.graphics.ctx->PSSetShaderResources(slot, 1, &tb.view)
             g.graphics.ctx->PSSetSamplers(slot, 1, &tb.sampler)
+
+        case typeid_of(TextureCube):
+            tc := cast(^TextureCube)resource
+            g.graphics.ctx->PSSetShaderResources(slot, 1, &tc.view)
+            g.graphics.ctx->PSSetSamplers(slot, 1, &tc.sampler)
         
         // Invalid binds
         case typeid_of(d3d.IPixelShader):
@@ -534,7 +646,7 @@ push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #cal
         case: log.errorf("Size of constant data %v is too large (max: 1024)", size_of(data^))
     }
     // log.infof("For buffer size %v, cb <%v> will be used", size, buffer_size)
-    buffer := g.graphics.constant_buffers[slot][buffer_size]
+    buffer := g.graphics.constant_buffers[stage][slot][buffer_size]
 
     mapped: d3d.MAPPED_SUBRESOURCE
 
@@ -578,12 +690,14 @@ draw :: proc(vertex_count: u32, loc := #caller_location) {
 }
 
 
-clear :: proc(color: [4]f32) {
+clear :: proc(color: [4]f32 = 0) {
     context.logger = g.logger
 
     info_manager_set()
     color := color
-    g.graphics.ctx->ClearRenderTargetView(g.graphics.target, &color)
+    if color != 0 {
+        g.graphics.ctx->ClearRenderTargetView(g.graphics.target, &color)
+    }
     g.graphics.ctx->ClearDepthStencilView(g.graphics.dsv, {.DEPTH}, 1, 0)
     info_manager_log()
 }
@@ -624,6 +738,7 @@ load_vertex_shader :: proc(code: []byte, entry_point: string, $vertex_type: type
     assert(vert_shader != nil)
     
     input_element_desc := get_vb_layout(vertex_type)
+    if len(input_element_desc) == 0 do return {vert_shader, nil}, true
     input_layout: ^d3d.IInputLayout
     err = g.graphics.device->CreateInputLayout(
         &input_element_desc[0], 
@@ -741,6 +856,11 @@ sd: dxgi.SWAP_CHAIN_DESC
     result = g.graphics.device->CreateDepthStencilState(&ds_desc_blended, &g.graphics.depth_blended)
     gfx_check(result)
 
+    ds_desc_skybox := ds_desc_blended
+    ds_desc_skybox.DepthFunc = .LESS_EQUAL
+    result = g.graphics.device->CreateDepthStencilState(&ds_desc_skybox, &g.graphics.depth_skybox)
+    gfx_check(result)
+
     g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_opaque, 1)
 
     depth_stencil_desc: d3d.TEXTURE2D_DESC = {
@@ -801,26 +921,27 @@ sd: dxgi.SWAP_CHAIN_DESC
     result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Alpha])
     gfx_check(result)
 
-    for slot in 0..<MAX_CB_SLOTS {
-        for cb_size, i in CB_Size {
-            size := 16<<uint(i)
-            log.info("Creating cb of size: %v for slot %v", size, slot)
-            cb_desc := d3d.BUFFER_DESC{
-                BindFlags = {.CONSTANT_BUFFER},
-                Usage     = .DYNAMIC,
-                CPUAccessFlags = {.WRITE},
-                ByteWidth = u32(size)
+    for stage in ShaderStage {
+        for slot in 0..<MAX_CB_SLOTS {
+            for cb_size, i in CB_Size {
+                size := 16<<uint(i)
+                cb_desc := d3d.BUFFER_DESC{
+                    BindFlags = {.CONSTANT_BUFFER},
+                    Usage     = .DYNAMIC,
+                    CPUAccessFlags = {.WRITE},
+                    ByteWidth = u32(size)
+                }
+
+                sd := d3d.SUBRESOURCE_DATA {}
+                
+                cb: ^d3d.IBuffer
+                info_manager_set()
+                err := g.graphics.device->CreateBuffer(&cb_desc, nil, &cb)
+                gfx_check(err, "Constant buffer creation failed")
+                g.graphics.constant_buffers[stage][slot][cb_size] = cb
+
+                info_manager_log()
             }
-
-            sd := d3d.SUBRESOURCE_DATA {}
-            
-            cb: ^d3d.IBuffer
-            info_manager_set()
-            err := g.graphics.device->CreateBuffer(&cb_desc, nil, &cb)
-            gfx_check(err, "Constant buffer creation failed")
-            g.graphics.constant_buffers[slot][cb_size] = cb
-
-            info_manager_log()
         }
     }
 
@@ -841,6 +962,10 @@ sd: dxgi.SWAP_CHAIN_DESC
         RenderTarget = render_targets
     }
     result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Opaque])
+    gfx_check(result)
+
+    // Skybox (opaque blend + skybox depth state)
+    result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Skybox])
     gfx_check(result)
 
     // Additive
@@ -965,7 +1090,7 @@ get_vb_layout :: proc($vertex_type: typeid, allocator := context.temp_allocator)
     }
     fields := reflect.struct_field_types(vertex_type)
     names  := reflect.struct_field_names(vertex_type)
-    data := make([]d3d.INPUT_ELEMENT_DESC, len(fields) > 0 ? len(fields) : 1, context.temp_allocator)
+    data := make([]d3d.INPUT_ELEMENT_DESC, len(fields), context.temp_allocator)
 
     for field, i in fields {
         data[i].SemanticName = strings.unsafe_string_to_cstring(names[i])
