@@ -29,16 +29,16 @@ init_windows_window :: proc() -> bool {
 
 
     // window dimensions are meant to be user accessible and so they should match the canvas size
-    handle: WindowHandle = cast(WindowHandle)win.CreateWindowW( 
+    handle: WindowHandle = cast(WindowHandle)win.CreateWindowW(
         wc.lpszClassName,
         name_16,
         win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE | win.WS_OVERLAPPEDWINDOW,
-        win.CW_USEDEFAULT, 
+        win.CW_USEDEFAULT,
         win.CW_USEDEFAULT,
         wr.right - wr.left,
         wr.bottom - wr.top,
-        nil, nil, 
-        wc.hInstance, 
+        nil, nil,
+        wc.hInstance,
         &g.window
     )
     g.window.handle = handle
@@ -104,8 +104,9 @@ resize_window :: proc(handle: WindowHandle) {
 }
 
 @(private = "package")
-_set_cursor :: proc() {
+set_cursor :: proc() {
     hwnd := win.HWND(g.window.handle)
+
     if g.raw_input {
         win.SetCapture(hwnd)
         for win.ShowCursor(win.FALSE) >= 0 {}
@@ -147,7 +148,7 @@ destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
     if !win.IsWindow(win.HWND(handle)) {
         return false
     }
-    log.debug("Destroying window with handle:", handle, location = loc)
+    log.info("Destroying window with handle:", handle, location = loc)
     success := win.DestroyWindow(win.HWND(handle))
     if !success do log_win_err(loc)
     return true
@@ -168,23 +169,24 @@ WndProc :: proc "stdcall" (
     assert(&g.window.handle != auto_cast hwnd)
     // log.debug(WindowsMessage(msg))
     switch msg {
-        case win.WM_CLOSE:         ok := destroy_window_raw(hwnd); assert(ok)
-        case win.WM_DESTROY:       win.PostQuitMessage(auto_cast wparam)
+        case win.WM_CLOSE: 		destroy_window()
+        case win.WM_DESTROY:    win.PostQuitMessage(auto_cast wparam)
         case win.WM_SIZE:
             // if auto_cast hwnd not_in g.windows do break
             x := win.GET_X_LPARAM(lparam)
             y := win.GET_Y_LPARAM(lparam)
             g.window.width = x
             g.window.height = y
-            
+
             // Graphics need to be initialized before resizing
             if g.graphics.ctx != nil do resize_graphics()
+            set_cursor()
 
         // -- Keyboard events --
         case win.WM_KEYDOWN:
             if wparam < 254 do create_kb_event( g.kb_state[Keycode(wparam)] ? .Repeat : .KeyDown, wparam)
         case win.WM_KEYUP:       create_kb_event(.KeyUp, wparam)
-        case win.WM_CHAR:        
+        case win.WM_CHAR:
             // We don't want random text input when typing with control down
             if !g.kb_state[.CONTROL] do add_event(TextInput { key = rune(wparam)})
 
@@ -202,9 +204,9 @@ WndProc :: proc "stdcall" (
         case win.WM_MBUTTONUP:   create_mouse_event(.MRelease, lparam)
 
         // Scroll
-        case win.WM_MOUSEWHEEL: 
+        case win.WM_MOUSEWHEEL:
             create_mouse_event(.MWheel, lparam, wparam)
-        
+
         // Move
         case win.WM_MOUSEMOVE:
             if g.raw_input do break
@@ -216,7 +218,7 @@ WndProc :: proc "stdcall" (
             g.mouse.button_state = {}
 
         case win.WM_SETCURSOR: win.SetCursor(win.LoadCursorA(nil, win.IDC_ARROW));
-        
+
         case win.WM_INPUT:
             if !g.raw_input do break
             size: u32
@@ -249,7 +251,7 @@ WndProc :: proc "stdcall" (
             }
             ri: ^win.RAWINPUT = auto_cast raw_data(g.mouse.raw_input_buffer[:])
             if (ri.header.dwType == win.RIM_TYPEMOUSE) && (ri.data.mouse.lLastX != 0 || ri.data.mouse.lLastY != 0) {
-                g.mouse_delta = {ri.data.mouse.lLastX, ri.data.mouse.lLastY}
+                g.mouse_delta += {ri.data.mouse.lLastX, ri.data.mouse.lLastY}
             }
 
     }
@@ -315,7 +317,7 @@ create_window_class :: proc(name: cstring16) -> (window_class: WindowClass, ok: 
         return {}, false
     }
     wc: win.WNDCLASSEXW
-    {   
+    {
         wc.cbSize = size_of(wc)
         wc.style = win.CS_OWNDC | win.CS_VREDRAW | win.CS_HREDRAW
         wc.lpfnWndProc = handle_msg_setup
@@ -359,13 +361,13 @@ log_win_err :: proc(loc := #caller_location) -> bool {
     if err == 0 {
         log.warnf("return value of log_win_err() should not be relied upon", location = loc)
         return false
-    } 
+    }
     pMsgBuf: [^]u16
     ok := win.FormatMessageW(
         win.FORMAT_MESSAGE_ALLOCATE_BUFFER |
         win.FORMAT_MESSAGE_FROM_SYSTEM | win.FORMAT_MESSAGE_IGNORE_INSERTS,
         nil, err, win.MAKELANGID(win.LANG_NEUTRAL, win.SUBLANG_DEFAULT),
-        transmute(win.LPWSTR)&pMsgBuf, 0, nil
+        cast(win.LPWSTR)&pMsgBuf, 0, nil
     )
     if ok == 0 do panic("Unable to log error")
     win_error_string16 := cstring16(pMsgBuf)

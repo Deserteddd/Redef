@@ -1,6 +1,5 @@
 package redef
 
-import "base:runtime"
 import "core:log"
 import "core:time"
 import que "core:container/queue"
@@ -19,7 +18,6 @@ Window :: struct {
 
 WindowMode :: enum {
     WINDOW,
-    MAXIMIZED,
     BORDERLESS
 }
 
@@ -64,7 +62,7 @@ MouseEventType :: enum {
 
     // For wheel events, MouseEvent.position corresponds to scroll direction
     // e.g. move wheel up -> event.mouse == {120, 0}
-    // 120 is the wheel delta defined by Windows. 
+    // 120 is the wheel delta defined by Windows.
     MWheel,
     Move
 }
@@ -122,20 +120,12 @@ pump_event_iter :: proc() -> (event: Event, ok: bool) {
 }
 
 destroy_window :: proc (loc := #caller_location){
-    // If a window was destroyed the window count can be decremented
     context.logger = g.logger
-    // defer g.window_count -= 1
     destroy_window_raw(g.window.handle, loc)
     unregister_window_class(loc)
-
-    // Last window deleated -> Should de-init
-    // if g.window_count == 0 {
-        que.destroy(&g.event_queue)
-        destroy_graphics(loc)
-        log.destroy_console_logger(g.logger)
-        // delete(g.window)
-    // }
-    // free(w)
+    que.destroy(&g.event_queue)
+    destroy_graphics(loc)
+    log.destroy_console_logger(g.logger)
 }
 
 get_window_size :: proc() -> vec2 {
@@ -147,15 +137,6 @@ set_window_size :: proc(w: ^Window, size: [2]i32) {
     w.width = size.x
     w.height = size.y
     resize_window(w.handle)
-}
-
-set_window_mode :: proc(wm: WindowMode, loc := #caller_location) {
-    context.logger = g.logger
-    if g.window_mode == wm do return
-    log.debug("Setting window mode:", wm, location = loc)
-    g.window_mode = wm
-    
-
 }
 
 get_mouse_position :: proc() -> (x, y: f32) {
@@ -174,5 +155,13 @@ is_key_down :: proc(key: Keycode) -> bool {
 
 set_relative_mouse_mode :: proc(enabled := true) {
     g.raw_input = enabled
-    _set_cursor()
+    set_cursor()
+}
+
+set_vsync :: proc(on: bool) {
+    g.vsync = on
+}
+
+debug_mode :: proc() -> bool {
+    return g.debug
 }

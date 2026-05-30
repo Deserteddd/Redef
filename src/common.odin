@@ -27,6 +27,7 @@ Global :: struct {
     logger:         log.Logger,
     window_mode:    WindowMode,
     mouse:          Mouse,
+    vsync,
     debug,
     raw_input,
     graphics_init:  bool,
