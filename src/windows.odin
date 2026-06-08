@@ -29,7 +29,7 @@ init_windows_window :: proc() -> bool {
 
 
     // window dimensions are meant to be user accessible and so they should match the canvas size
-    handle: WindowHandle = cast(WindowHandle)win.CreateWindowW(
+    g.window.handle = cast(WindowHandle)win.CreateWindowW(
         wc.lpszClassName,
         name_16,
         win.WS_CAPTION | win.WS_MINIMIZEBOX | win.WS_SYSMENU | win.WS_VISIBLE | win.WS_OVERLAPPEDWINDOW,
@@ -41,7 +41,6 @@ init_windows_window :: proc() -> bool {
         wc.hInstance,
         &g.window
     )
-    g.window.handle = handle
 
     if g.window.handle == nil {
         log_win_err()
@@ -63,7 +62,7 @@ init_windows_window :: proc() -> bool {
 unregister_window_class :: proc(loc := #caller_location) {
     assert(g.window.handle != nil)
     ok := win.UnregisterClassW(string_to_cstring16(g.window.name), g.window.window_class.hInstance)
-    if !ok do log_win_err()
+    if !ok do log_win_err(loc)
 }
 
 @(private = "package")
@@ -171,6 +170,7 @@ WndProc :: proc "stdcall" (
     switch msg {
         case win.WM_CLOSE: 		destroy_window()
         case win.WM_DESTROY:    win.PostQuitMessage(auto_cast wparam)
+        case win.WM_SETFOCUS:   if g.raw_input do set_cursor()
         case win.WM_SIZE:
             // if auto_cast hwnd not_in g.windows do break
             x := win.GET_X_LPARAM(lparam)

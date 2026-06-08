@@ -1,5 +1,6 @@
 package redef
 
+import "base:runtime"
 import "core:log"
 import "core:time"
 import que "core:container/queue"
@@ -121,11 +122,12 @@ pump_event_iter :: proc() -> (event: Event, ok: bool) {
 
 destroy_window :: proc (loc := #caller_location){
     context.logger = g.logger
-    destroy_window_raw(g.window.handle, loc)
-    unregister_window_class(loc)
-    que.destroy(&g.event_queue)
-    destroy_graphics(loc)
-    log.destroy_console_logger(g.logger)
+    if destroy_window_raw(g.window.handle, loc) {
+        unregister_window_class(loc)
+        que.destroy(&g.event_queue)
+        destroy_graphics(loc)
+        log.destroy_console_logger(g.logger)
+    }
 }
 
 get_window_size :: proc() -> vec2 {
