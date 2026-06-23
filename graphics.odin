@@ -422,15 +422,16 @@ create_index_buffer_16 :: proc(indices: []u16) -> IndexBuffer {
 destroy_index_buffer :: proc(ib: IndexBuffer) {ib.buf->Release()}
 
 
-create_vertex_buffer :: proc(vertices: []$T) -> VertexBuffer {
+create_vertex_buffer :: proc(vertices: []$T, cpu_access := false) -> VertexBuffer {
 	context.logger = g.logger
 	ensure(vertices != nil)
 	len_bytes := u32(len(vertices) * size_of(T))
 	vbo_desc := d3d.BUFFER_DESC {
 		BindFlags           = {.VERTEX_BUFFER},
-		Usage               = .DEFAULT,
+		Usage               = cpu_access ? .DYNAMIC : .DEFAULT,
 		ByteWidth           = len_bytes,
 		StructureByteStride = size_of(T),
+		CPUAccessFlags		= cpu_access ? {.WRITE} : {}
 	}
 
 	sd := d3d.SUBRESOURCE_DATA {
