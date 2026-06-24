@@ -15,7 +15,6 @@ Rect :: struct { x, y, w, h: i32 }
 EventQueue :: que.Queue(Event)
 
 
-@(private = "package")
 Global :: struct {
     kb_state:       KeyboardState,
     event_queue:    EventQueue,
@@ -34,7 +33,6 @@ Global :: struct {
     graphics_init:  bool,
 }
 
-@(private = "package")
 g: Global
 
 @(private = "package")

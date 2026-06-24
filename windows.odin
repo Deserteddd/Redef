@@ -4,7 +4,23 @@ import "core:log"
 import "base:runtime"
 import win "core:sys/windows"
 import que "core:container/queue"
+import im_win32 "shared:imgui/imgui_impl_win32"
 
+
+import "base:intrinsics"
+
+when intrinsics.is_package_imported("imgui") {
+    IMGUI_WND_PROC :: im_win32.WndProcHandler
+} else {
+    IMGUI_WND_PROC :: proc(
+        hWnd: win.HWND, 
+        msg: win.UINT, 
+        wParam: win.WPARAM, 
+        lParam: win.LPARAM
+    ) -> win.LRESULT {
+        return 0
+    }
+}
 
 // -------------------------------------------
 //               Protected
@@ -156,6 +172,9 @@ destroy_window_raw :: proc(handle: rawptr, loc := #caller_location) -> bool {
 // -------------------------------------------
 //               Private
 // -------------------------------------------
+
+
+
 @(private = "file")
 WndProc :: proc "stdcall" (
     hwnd: win.HWND,
@@ -167,6 +186,8 @@ WndProc :: proc "stdcall" (
     context.logger = g.logger
     assert(&g.window.handle != auto_cast hwnd)
     // log.debug(WindowsMessage(msg))
+    if IMGUI_WND_PROC(hwnd, msg, wparam, lparam) == 1 do return 1
+    
     switch msg {
         case win.WM_CLOSE: 		destroy_window()
         case win.WM_DESTROY:    win.PostQuitMessage(auto_cast wparam)
