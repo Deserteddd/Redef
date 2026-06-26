@@ -24,6 +24,7 @@ Graphics :: struct {
 	rasterizer_wireframe: ^d3d.IRasterizerState,
     default_sampler:      ^d3d.ISamplerState,
     env_dsv:			  ^d3d.IDepthStencilView,
+	depth_texture: 		  Texture,
 	constant_buffers:     [ShaderStage][MAX_CB_SLOTS][CB_Size]^d3d.IBuffer,
 	info_manager:         DXGIInfoManager,
 	blend_mode:           BlendMode,
@@ -144,13 +145,9 @@ set_blend_mode :: proc(mode: BlendMode) {
 		return
 	}
 
-	state := g.graphics.blend_states[mode]
-	if state == nil {
-		log.errorf("Blend state for mode %v is not initialized", mode)
-		return
-	}
+	state := g.graphics.blend_states[mode]; ensure(state != nil)
+	blend_factor: [4]f32 = 1
 
-	blend_factor := [4]f32{1, 1, 1, 1}
 	info_manager_set()
 	g.graphics.ctx->OMSetBlendState(state, &blend_factor, 0xFFFFFFFF)
 
@@ -167,6 +164,9 @@ set_blend_mode :: proc(mode: BlendMode) {
 	info_manager_log()
 }
 
+get_depth_texture :: proc() -> ^Texture {
+	return &g.graphics.depth_texture
+}
 
 create_texture_buffer :: proc(
 	pixels: [][]byte,
@@ -580,8 +580,7 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
 
 	// Invalid binds
 	case typeid_of(d3d.IPixelShader):
-		log.errorf("Type: %v is not bindable", typeid_of(T), location = loc)
-		log.error("Pass pixel shader by reference: bind(&pixel_shader)", location = loc)
+		log.errorf("Type: %v is not bindable\nHint: pass pixel shader by reference", typeid_of(T), location = loc)
 		ok = false
 
 	case:
@@ -589,7 +588,7 @@ bind :: proc(resource: ^$T, slot: u32 = 0, loc := #caller_location) -> (ok: bool
 		ok = false
 
 	}
-	info_manager_log()
+	info_manager_log(loc = loc)
 	return
 }
 
@@ -639,7 +638,7 @@ push_constant_data :: proc(stage: ShaderStage, data: ^$T, slot: u32, loc := #cal
 	mem.copy(mapped.pData, data, size_of(data^))
 
 	g.graphics.ctx->Unmap(cast(^d3d.IResource)buffer, 0)
-	info_manager_log()
+	info_manager_log(loc = loc)
 
 	switch stage {
 	case .Vertex:
@@ -801,7 +800,7 @@ load_pixel_shader :: proc(
 		&err_blob,
 	)
 	if ok != 0 {
-		print_shader_compilation_message(err_blob, .Error)
+		print_shader_compilation_message(err_blob, .Error, loc = loc)
 		return {}, false
 	}
 	assert(ps_blob != nil)
@@ -864,55 +863,40 @@ init_graphics :: proc(debug: bool, loc := #caller_location) {
 
 	g.graphics.ctx->RSSetViewports(1, &viewport)
 
+	// Depth stencil state
 	ds_desc: d3d.DEPTH_STENCIL_DESC = {
 		DepthEnable    = true,
 		DepthWriteMask = .ALL,
 		DepthFunc      = .LESS,
 	}
 
-	result = g.graphics.device->CreateDepthStencilState(&ds_desc, &g.graphics.depth_opaque)
-	gfx_check(result)
+	{
+		result = g.graphics.device->CreateDepthStencilState(&ds_desc, &g.graphics.depth_opaque)
+		gfx_check(result)
+	}
 
-	ds_desc_blended := ds_desc
-	ds_desc_blended.DepthWriteMask = .ZERO
-	result = g.graphics.device->CreateDepthStencilState(
-		&ds_desc_blended,
-		&g.graphics.depth_blended,
-	)
-	gfx_check(result)
+	{
+		ds_desc.DepthWriteMask = .ZERO
+		result = g.graphics.device->CreateDepthStencilState(&ds_desc, &g.graphics.depth_blended)
+		gfx_check(result)
+	}
 
-	ds_desc_skybox := ds_desc_blended
-	ds_desc_skybox.DepthWriteMask = .ZERO
-	ds_desc_skybox.DepthFunc = .LESS_EQUAL
-	result = g.graphics.device->CreateDepthStencilState(&ds_desc_skybox, &g.graphics.depth_skybox)
-	gfx_check(result)
+	{
+		ds_desc.DepthFunc = .LESS_EQUAL
+		ds_desc.DepthWriteMask = .ZERO
+		result = g.graphics.device->CreateDepthStencilState(&ds_desc, &g.graphics.depth_skybox)
+		gfx_check(result)
+	}
 
 	g.graphics.ctx->OMSetDepthStencilState(g.graphics.depth_opaque, 1)
 
-	depth_stencil_desc: d3d.TEXTURE2D_DESC = {
-		Width = u32(g.window.width),
-		Height = u32(g.window.height),
-		MipLevels = 1,
-		ArraySize = 1,
-		Format = .D32_FLOAT,
-		SampleDesc = {Count = 1},
-		Usage = .DEFAULT,
-		BindFlags = {.DEPTH_STENCIL},
-	}
-	depth_stencil: ^d3d.ITexture2D
-	result = g.graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
-	gfx_check(result)
+	init_depth()
 
-	dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
-		Format        = .D32_FLOAT,
-		ViewDimension = .TEXTURE2D,
-	}
-	result = g.graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &g.graphics.dsv)
-	gfx_check(result)
-
+	// Set render target
 	g.graphics.ctx->OMSetRenderTargets(1, &g.graphics.target, g.graphics.dsv)
 	info_manager_log()
 
+	// Rasterizer
 	rasterizer_desc_solid: d3d.RASTERIZER_DESC = {
 		FillMode              = .SOLID,
 		CullMode              = .BACK,
@@ -1009,8 +993,9 @@ init_graphics :: proc(debug: bool, loc := #caller_location) {
 	result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Opaque])
 	gfx_check(result)
 
-	// Skybox (opaque blend + skybox depth state)
-	result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Skybox])
+	// Skybox (opaque blend + skybox blend state)
+	// result = g.graphics.device->CreateBlendState(&blend_desc, &g.graphics.blend_states[.Skybox])
+	g.graphics.blend_states[.Skybox] = g.graphics.blend_states[.Opaque]
 	gfx_check(result)
 
 	// Additive
@@ -1048,8 +1033,9 @@ resize_graphics :: proc() {
 
 	if width <= 0 || height <= 0 do return
 
-	info_manager_set()
 
+
+	info_manager_set()
 	g.graphics.ctx->OMSetRenderTargets(0, nil, nil)
 	info_manager_log()
 
@@ -1059,14 +1045,9 @@ resize_graphics :: proc() {
 		g.graphics.target = nil
 	}
 
-	if g.graphics.dsv != nil {
-		rc := g.graphics.dsv->Release()
-		assert(rc == 0)
-		g.graphics.dsv = nil
-	}
-
 	result := g.graphics.swapchain->ResizeBuffers(0, u32(width), u32(height), .UNKNOWN, {})
 	gfx_check(result)
+
 
 	backbuffer: ^d3d.IResource
 	result = g.graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, cast(^rawptr)&backbuffer)
@@ -1078,29 +1059,7 @@ resize_graphics :: proc() {
 	rc := backbuffer->Release()
 	assert(rc == 0)
 
-	depth_stencil_desc: d3d.TEXTURE2D_DESC = {
-		Width = u32(width),
-		Height = u32(height),
-		MipLevels = 1,
-		ArraySize = 1,
-		Format = .D32_FLOAT,
-		SampleDesc = {Count = 1},
-		Usage = .DEFAULT,
-		BindFlags = {.DEPTH_STENCIL},
-	}
-
-	depth_stencil: ^d3d.ITexture2D
-	result = g.graphics.device->CreateTexture2D(&depth_stencil_desc, nil, &depth_stencil)
-	gfx_check(result)
-
-	dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
-		Format        = .D32_FLOAT,
-		ViewDimension = .TEXTURE2D,
-	}
-	result = g.graphics.device->CreateDepthStencilView(depth_stencil, &dsv_desc, &g.graphics.dsv)
-	gfx_check(result)
-
-	rc = depth_stencil->Release()
+	init_depth()
 	assert(rc == 0)
 
 	g.graphics.ctx->OMSetRenderTargets(1, &g.graphics.target, g.graphics.dsv)
@@ -1108,6 +1067,63 @@ resize_graphics :: proc() {
 	viewport := d3d.VIEWPORT{0, 0, f32(width), f32(height), 0, 1}
 	g.graphics.ctx->RSSetViewports(1, &viewport)
 	info_manager_log()
+}
+
+init_depth :: proc() {
+	if g.graphics.dsv != nil {
+		rc := g.graphics.dsv->Release()
+		assert(rc == 0)
+		g.graphics.dsv = nil
+	}
+
+	depth_tex := g.graphics.depth_texture
+	if depth_tex.view != nil {
+		rc := depth_tex.view->Release()
+		assert(rc == 0)
+		depth_tex.view = nil
+
+	}
+
+	if depth_tex.tex != nil {
+		rc := depth_tex.tex->Release()
+		assert(rc == 0)
+		depth_tex.tex = nil
+	}
+
+	depth_texture_desc: d3d.TEXTURE2D_DESC = {
+		Width = u32(g.window.width),
+		Height = u32(g.window.height),
+		MipLevels = 1,
+		ArraySize = 1,
+		Format = .R32_TYPELESS,
+		SampleDesc = {Count = 1},
+		Usage = .DEFAULT,
+		BindFlags = {.DEPTH_STENCIL, .SHADER_RESOURCE},
+	}
+	result := g.graphics.device->CreateTexture2D(&depth_texture_desc, nil, &g.graphics.depth_texture.tex)
+	gfx_check(result)
+	
+	// Depth stencil view
+	dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
+		Format        = .D32_FLOAT,
+		ViewDimension = .TEXTURE2D,
+	}
+	result = g.graphics.device->CreateDepthStencilView(g.graphics.depth_texture.tex, &dsv_desc, &g.graphics.dsv)
+	gfx_check(result)
+
+	// Depth texture view
+	view_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
+		Format = .R32_FLOAT,
+		ViewDimension = d3d.SRV_DIMENSION.TEXTURE2D,
+		Texture2D = {MipLevels = 1},
+	}
+
+	result = g.graphics.device->CreateShaderResourceView(
+		g.graphics.depth_texture.tex, 
+		&view_desc, 
+		&g.graphics.depth_texture.view
+	)
+	gfx_check(result)
 }
 
 @(private = "file")
