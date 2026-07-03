@@ -695,6 +695,7 @@ load_vertex_shader :: proc(
 	code: []byte,
 	entry_point: string,
 	$vertex_type: typeid,
+	source_name: string = "",
 	loc := #caller_location,
 ) -> (
 	vs: VertexShader,
@@ -703,15 +704,16 @@ load_vertex_shader :: proc(
 	context.logger = g.logger
 
 	entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
+	source_name := strings.unsafe_string_to_cstring(source_name)
 	vs_blob: ^d3d.IBlob
 	err_blob: ^d3d.IBlob
 
 	err := d3dc.Compile(
 		raw_data(code),
 		len(code),
-		"<Shader input file>",
+		source_name,
 		nil,
-		nil,
+		d3dc.D3DCOMPILE_STANDARD_FILE_INCLUDE,
 		entry_point_cstr,
 		"vs_5_0",
 		0,

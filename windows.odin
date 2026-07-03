@@ -375,7 +375,6 @@ handle_msg_setup :: proc "stdcall" (
     return win.DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-@(private = "package")
 // Returns: true if a valid windows error exited
 log_win_err :: proc(loc := #caller_location) -> bool {
     err := win.GetLastError()
