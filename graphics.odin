@@ -769,9 +769,14 @@ load_vertex_shader :: proc(
 	return {vert_shader, input_layout}, true
 }
 
-destroy_vertex_shader :: proc(vs: VertexShader) {
-	vs.layout->Release()
+destroy_vertex_shader :: proc(vs: ^VertexShader) {
+    if vs.layout != nil {
+	    vs.layout->Release()
+    }
+
+    vs.layout = nil
 	vs.shader->Release()
+    vs.shader = nil
 }
 
 load_pixel_shader :: proc(
@@ -816,7 +821,7 @@ load_pixel_shader :: proc(
 	return pixel_shader, true
 }
 
-destroy_pixel_shader :: proc(ps: PixelShader) {ps->Release()}
+destroy_pixel_shader :: proc(ps: ^PixelShader) {ps^->Release(); ps^ = nil}
 
 @(private = "package")
 init_graphics :: proc(debug: bool, loc := #caller_location) {
