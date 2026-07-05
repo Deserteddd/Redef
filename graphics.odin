@@ -126,6 +126,7 @@ BlendMode :: enum {
 }
 
 destroy :: proc {
+    destroy_structured_buffer,
 	destroy_index_buffer,
 	destroy_vertex_buffer,
 	destroy_texture,
@@ -235,51 +236,6 @@ create_texture_buffer :: proc(
 	return TextureBuffer{width, height, u32(len(pixels)), tex, view}
 }
 
-EnvironmentMap :: struct {
-	texture: ^d3d.ITexture2D,
-	targets: [CubeFace]^d3d.IRenderTargetView,
-	view:	 ^d3d.IShaderResourceView,
-}
-
-create_environment_map :: proc() -> EnvironmentMap {
-	context.logger = g.logger
-	size :: 512
-	env_map: EnvironmentMap
-	tex_desc: d3d.TEXTURE2D_DESC = {
-		Width = size,
-		Height = size,
-		MipLevels = 1,
-		ArraySize = 6, // one slice per cube face
-		Format = .R8G8B8A8_UNORM,
-		SampleDesc = {Count = 1},
-		Usage = .DEFAULT,
-		BindFlags = {.SHADER_RESOURCE, .RENDER_TARGET},
-		MiscFlags = {.TEXTURECUBE},
-	}
-
-	result := g.graphics.device->CreateTexture2D(&tex_desc, nil, &env_map.texture)
-	gfx_check(result, "Failed to create environment texture")
-
-	view_desc: d3d.SHADER_RESOURCE_VIEW_DESC = {
-		Format = tex_desc.Format,
-		ViewDimension = .TEXTURECUBE,
-		TextureCube = {MostDetailedMip = 0, MipLevels = 1},
-	}
-	result = g.graphics.device->CreateShaderResourceView(env_map.texture, &view_desc, &env_map.view)
-	gfx_check(result)
-
-	for face in CubeFace {
-		backbuffer: ^d3d.IResource
-		result = g.graphics.swapchain->GetBuffer(0, d3d.IResource_UUID, cast(^rawptr)&backbuffer)
-		gfx_check(result)
-		result = g.graphics.device->CreateRenderTargetView(backbuffer, nil, &env_map.targets[face])
-		gfx_check(result)
-
-		backbuffer->Release()
-	}
-
-	return env_map
-}
 
 create_texture_cube :: proc(size: u32, pixels: [CubeFace][]byte) -> TextureCube {
 	tex_desc: d3d.TEXTURE2D_DESC = {
@@ -686,16 +642,11 @@ frame_end :: proc() {
 	info_manager_log()
 }
 
-clear_environment_map :: proc(env_map: EnvironmentMap) {
-
-}
-
 // Entry point must be null terminated
 load_vertex_shader :: proc(
 	code: []byte,
 	entry_point: string,
 	$vertex_type: typeid,
-	source_name: string = "",
 	loc := #caller_location,
 ) -> (
 	vs: VertexShader,
@@ -704,16 +655,15 @@ load_vertex_shader :: proc(
 	context.logger = g.logger
 
 	entry_point_cstr := strings.unsafe_string_to_cstring(entry_point)
-	source_name := strings.unsafe_string_to_cstring(source_name)
 	vs_blob: ^d3d.IBlob
 	err_blob: ^d3d.IBlob
 
 	err := d3dc.Compile(
 		raw_data(code),
 		len(code),
-		source_name,
+		"<Shader input file>",
 		nil,
-		d3dc.D3DCOMPILE_STANDARD_FILE_INCLUDE,
+		nil,
 		entry_point_cstr,
 		"vs_5_0",
 		0,
@@ -775,7 +725,6 @@ destroy_vertex_shader :: proc(vs: ^VertexShader) {
     if vs.layout != nil {
 	    vs.layout->Release()
     }
-
     vs.layout = nil
 	vs.shader->Release()
     vs.shader = nil
