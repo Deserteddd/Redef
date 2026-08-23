@@ -105,9 +105,9 @@ create_window :: proc (name: string, width, height: i32, debug: bool, loc := #ca
     g.window.name = name
     if ok := init_windows_window(); !ok do return false
 
-    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(g.window.name), g.window.handle, location = loc)
 
     init_graphics(debug, loc = loc)
+    log.infof("Window '%v' created [handle: %v]", string_to_cstring16(g.window.name), g.window.handle, location = loc)
     g.elapsed = time.now()
     g.dt = time.now()
     return true
@@ -141,14 +141,14 @@ set_window_size :: proc(w: ^Window, size: [2]i32) {
     resize_window(w.handle)
 }
 
-get_mouse_position :: proc() -> (x, y: f32) {
-    return f32(g.mouse_position.x), f32(g.mouse_position.y)
+get_mouse_position :: proc() -> [2]f32 {
+    return {f32(g.mouse_position.x), f32(g.mouse_position.y)}
 }
 
-get_relative_mouse_movement :: proc() -> (x, y: f32) {
+get_relative_mouse_movement :: proc() -> [2]f32 {
     delta := g.mouse_delta
     g.mouse_delta = 0
-    return f32(delta.x), f32(delta.y)
+    return {f32(delta.x), f32(delta.y)}
 }
 
 is_key_down :: proc(key: Keycode) -> bool {

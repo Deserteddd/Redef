@@ -10,7 +10,7 @@ vec3 :: [3]f32
 vec4 :: [4]f32
 mat4 :: matrix[4,4]f32
 
-Rect :: struct { x, y, w, h: i32 }
+Rect :: struct { x, y, w, h: f32 }
 
 EventQueue :: que.Queue(Event)
 

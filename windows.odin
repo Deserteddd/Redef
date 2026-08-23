@@ -311,8 +311,12 @@ create_mouse_event :: proc(event_type: MouseEventType, lparam: win.LPARAM, wpara
     }
 
     #partial switch event_type {
-        case .LPress:   g.mouse.button_state += { .LEFT }
-        case .LRelease: g.mouse.button_state -= { .LEFT }
+        case .LPress:   
+            g.mouse.button_state += { .LEFT }
+            g.mouse.lmb_pressed = true
+        case .LRelease: 
+            g.mouse.button_state -= { .LEFT }
+            g.mouse.lmb_pressed = false
         case .RPress:   g.mouse.button_state += { .RIGHT }
         case .RRelease: g.mouse.button_state -= { .RIGHT }
         case .MPress:   g.mouse.button_state += { .MIDDLE }

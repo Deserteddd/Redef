@@ -636,7 +636,7 @@ clear :: proc(color: [4]f32 = 0) {
 
 frame_end :: proc() {
 	context.logger = g.logger
-
+	g.mouse.lmb_pressed = false
 	info_manager_set()
 	g.graphics.swapchain->Present(g.vsync ? 1 : 0, {})
 	info_manager_log()
@@ -977,7 +977,6 @@ init_graphics :: proc(debug: bool, loc := #caller_location) {
 	set_primitive_topology(.triangleList)
 
 	g.graphics_init = true
-	log.info("Initialized graphics", location = loc)
 }
 
 @(private = "package")
