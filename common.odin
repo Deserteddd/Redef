@@ -35,6 +35,33 @@ Global :: struct {
 
 g: Global
 
+MonitorInfo :: struct {
+    monitor,
+    work_area: [2]i32,
+}
+
+get_monitor_info :: proc() -> MonitorInfo {
+    enum_proc: win.Monitor_Enum_Proc : proc "stdcall" (win.HMONITOR, win.HDC, ^win.RECT, int) -> win.BOOL {
+        return true
+    }
+
+    monitor := win.MonitorFromPoint({}, .MONITOR_DEFAULTTOPRIMARY); assert(monitor != nil)
+
+    info: win.MONITORINFO
+    info.cbSize = size_of(info)
+
+    ok := win.GetMonitorInfoW(monitor, &info); assert(bool(ok))
+
+    return {
+        {info.rcMonitor.right, info.rcMonitor.bottom},
+        {info.rcWork.right, info.rcMonitor.bottom}
+    }
+    
+    // win.EnumDisplayDevicesW()
+    // win.EnumDisplayMonitors()
+}
+
+
 @(private = "package")
 add_event :: proc(event: Event, loc := #caller_location) { 
     ok, err := que.enqueue(&g.event_queue, event)

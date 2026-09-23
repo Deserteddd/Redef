@@ -1057,7 +1057,7 @@ init_depth :: proc() {
 	}
 	result := g.graphics.device->CreateTexture2D(&depth_texture_desc, nil, &g.graphics.depth_texture.tex)
 	gfx_check(result)
-	
+
 	// Depth stencil view
 	dsv_desc: d3d.DEPTH_STENCIL_VIEW_DESC = {
 		Format        = .D32_FLOAT,
@@ -1074,8 +1074,8 @@ init_depth :: proc() {
 	}
 
 	result = g.graphics.device->CreateShaderResourceView(
-		g.graphics.depth_texture.tex, 
-		&view_desc, 
+		g.graphics.depth_texture.tex,
+		&view_desc,
 		&g.graphics.depth_texture.view
 	)
 	gfx_check(result)
@@ -1213,7 +1213,7 @@ info_manager_set :: proc() {
 create_info_manager :: proc() {
 	if !g.debug do return
 	assert(g.graphics.info_manager.info_queue == nil)
-	ok := dxgi.DXGIGetDebugInterface1(
+	ok := dxgi.GetDebugInterface1(
 		0,
 		dxgi.IInfoQueue_UUID,
 		cast(^rawptr)&g.graphics.info_manager.info_queue,
